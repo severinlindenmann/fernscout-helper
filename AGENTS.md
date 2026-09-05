@@ -5,6 +5,12 @@ extract what already exists, ask for what only they know, and write the journal'
 own format. This repository is **tools, not content** — what a run produces is
 theirs, and `import/`, `export/` and `content/` are all gitignored.
 
+**Built and tested with Claude Code on macOS**, which is where `.claude/skills/`
+is read without configuring anything and where the photo tools can reach a Photos
+library directly. Nothing below assumes it: if you are a different agent, or on a
+different machine, read the skill's `SKILL.md` and check what it needs before
+running it.
+
 ## Start here
 
 | They say | Skill |

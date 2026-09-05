@@ -19,6 +19,26 @@ Then, for example:
 
 > Help me export photos from iCloud on my Mac.
 
+## What works best
+
+**[Claude Code](https://claude.com/claude-code) on a MacBook.** That is what this
+is built and tested against, and it is the combination where everything works
+without you arranging anything:
+
+- **Claude Code** reads `.claude/skills/` by itself, so the tools are simply
+  there once you have cloned the folder — nothing to configure, install or
+  point at. Another agent works too if it reads the same format, or if you paste
+  a `SKILL.md` in by hand.
+- **A Mac** is where the photo tools can reach your library directly. Your
+  iCloud photos are already on the machine, `sips` for the previews is built into
+  macOS, and Photos will hand over the locations it keeps in its own database.
+  Nothing has to be uploaded anywhere.
+
+Everything else still works elsewhere — a statement is a CSV and a journal is
+markdown, on any operating system. It is the photo half that wants a Mac today,
+and that is a missing tool rather than a decision. See **The tools** below for
+what each one needs.
+
 ## The three jobs
 
 Every tool here does one of three things.
