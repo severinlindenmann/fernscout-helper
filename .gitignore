@@ -6,3 +6,6 @@
 # Node, editors, macOS
 node_modules/
 .DS_Store
+
+# Bank statements. Somebody's account history is not this repository's business.
+/import/

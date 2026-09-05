@@ -40,6 +40,7 @@ Every day starts as a **draft** — nothing is published until you say so.
 | Skill | Say |
 | --- | --- |
 | `icloud-export` | "help me export photos from iCloud on my Mac" |
+| `revolut-costs` | "add my budget from this Revolut statement" |
 
 More will follow. Each one lives in `.claude/skills/<name>/` with its
 instructions in `SKILL.md` and its scripts beside them, so a skill is one folder
@@ -75,7 +76,8 @@ The folder is already the journal. If you want it as a website:
 
 ## What stays out of git
 
-`export/` and `content/` — your photographs, your notes, your journal. This
-repository is the tools; none of what it produces belongs in it.
+`export/`, `content/` and `import/` — your photographs, your notes, your journal
+and your bank statements. This repository is the tools; none of what it touches
+belongs in it.
 
 MIT.

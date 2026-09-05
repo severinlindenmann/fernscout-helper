@@ -6,10 +6,13 @@ a run produces — `export/` and `content/` — is theirs and is gitignored.
 
 ## Start here
 
-The person will say something like "help me export photos from iCloud on my
-Mac". That is the `icloud-export` skill in `.claude/skills/icloud-export/`.
-**Read its `SKILL.md` before running anything**; it carries the order of the
-commands, the questions to ask, and where to stop and wait.
+| They say | Skill |
+| --- | --- |
+| "help me export photos from iCloud on my Mac" | `icloud-export` |
+| "add my budget", "import my Revolut statement", "what did the trip cost" | `revolut-costs` |
+
+**Read the skill's `SKILL.md` before running anything**; it carries the order of
+the commands, the questions to ask, and where to stop and wait.
 
 ## The one rule
 
@@ -43,9 +46,14 @@ not consent, and neither is silence.
 
 ```
 .claude/skills/<name>/       one skill: SKILL.md and its scripts, together
-export/<trip>/               gitignored — photos, photos.json, review.json, notes.md
+import/<bank>/               gitignored — statements, exactly as the bank wrote them
+export/<trip>/               gitignored — photos, photos.json, review.json, notes.md, costs.json
 content/<user>/trips/<trip>/ gitignored — the journal itself
 ```
+
+A bank statement says what was **paid**, never what it was **for**. Categories
+are proposed to the person and corrected by them, never decided quietly — the
+same rule as the prose, applied to money.
 
 Scripts are plain Node with **no dependencies** — `node:` builtins, plus
 `osxphotos`, `exiftool` and `sips` on the command line. Keep it that way: a
