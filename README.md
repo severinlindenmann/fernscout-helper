@@ -1,11 +1,13 @@
 # Fernscout Helper
 
-Tools for making a [Fernscout](https://fernscout.ch) travel journal out of what
-you already have — photographs on your Mac, and a holiday you never wrote up.
+A toolbox for getting your life **into** a [Fernscout](https://fernscout.ch)
+travel journal — extracting content from wherever it already lives, writing what
+is missing, and formatting all of it the way the journal expects.
 
-**You do not host anything, and you do not run any server software.** You clone
-this, open it with an AI agent, and say what you want. The result is a folder of
-markdown and photographs that belongs to you and reads without any of this.
+You do not host anything and you do not run any server software. You clone this,
+open it with an AI agent, and say what you want in your own words. What comes out
+is a folder of markdown and photographs that belongs to you and reads without any
+of this.
 
 ```bash
 git clone https://github.com/severinlindenmann/fernscout-helper
@@ -13,21 +15,46 @@ cd fernscout-helper
 claude          # or any agent that reads .claude/skills/
 ```
 
-Then say, in your own words:
+Then, for example:
 
 > Help me export photos from iCloud on my Mac.
 
-That is the whole interface. The agent checks whether the tools are installed,
-asks you which dates and which trip, exports the photographs, opens a page in
-your browser where you pick the ones that belong and write a few words about each
-day, and then writes the journal from what you wrote.
+## The three jobs
+
+Every tool here does one of three things.
+
+| | |
+| --- | --- |
+| **Extract** | Get what already exists out of wherever it is stuck — a phone's photo library, a bank's CSV export, a chat log, a folder of camera files |
+| **Create** | Ask for what only a person knows — what happened that day, what the flights cost, who was there — and write it down without inventing the rest |
+| **Format** | Turn all of it into the journal's own shape: `trip.md`, one entry per day, sized galleries, costs, coordinates |
+
+## The tools
+
+| Skill | Say | Needs |
+| --- | --- | --- |
+| `icloud-export` | "help me export photos from iCloud on my Mac" | macOS |
+| `revolut-costs` | "import my Revolut statement" | anywhere |
+| `trip-budget` | "what did the trip cost", "add the flights" | anywhere |
+
+**A skill is one folder.** `.claude/skills/<name>/` holds a `SKILL.md` you can
+read start to finish and the scripts it runs, so nothing is hidden and nothing
+needs a build step. `.claude/skills/shared/` holds the few things more than one
+of them needs.
+
+More will follow, and they will not all be for a Mac: photos off an Android
+phone, a Windows folder of camera files, Google Photos, a chat export, a
+handwritten notebook photographed page by page. The pattern is the same each
+time — get the content out, ask for what only a person knows, write the journal's
+own format.
 
 ## What you get
 
 ```
 content/<you>/trips/<trip>/
-  trip.md                     what the trip was
-  entries/2026-06-23-….md     one day, its photos, what happened
+  trip.md                     what the trip was, and the budget
+  costs.md                    what was spent before leaving
+  entries/2026-06-23-….md     one day: what happened, its photos, what it cost
   media/…                     the pictures, resized, with every trace of
                               metadata removed
 ```
@@ -35,30 +62,12 @@ content/<you>/trips/<trip>/
 Markdown and JPEGs in a folder you own. No database, no account, no lock-in.
 Every day starts as a **draft** — nothing is published until you say so.
 
-## The tools
-
-| Skill | Say |
-| --- | --- |
-| `icloud-export` | "help me export photos from iCloud on my Mac" |
-| `revolut-costs` | "add my budget from this Revolut statement" |
-| `trip-budget` | "what did the trip cost", "add the flights" |
-
-More will follow. Each one lives in `.claude/skills/<name>/` with its
-instructions in `SKILL.md` and its scripts beside them, so a skill is one folder
-you can read end to end.
-
 ## What it needs
 
-macOS, and:
-
-```bash
-brew install osxphotos exiftool node
-```
-
-`osxphotos` reads the Photos library, `exiftool` rescues the GPS locations Photos
-keeps in its own database rather than in the files, and `node` runs the review
-page. `sips`, which makes the previews, is already on your Mac. The agent checks
-all of this for you and asks before installing anything.
+Nothing to install for the repository itself: the scripts are plain Node with no
+dependencies, so there is no `npm install`. Individual skills need their own
+tools — `icloud-export` wants `osxphotos`, `exiftool` and Node on a Mac — and
+each one checks for them and asks before installing anything.
 
 ## Then what
 
@@ -77,8 +86,8 @@ The folder is already the journal. If you want it as a website:
 
 ## What stays out of git
 
-`export/`, `content/` and `import/` — your photographs, your notes, your journal
-and your bank statements. This repository is the tools; none of what it touches
-belongs in it.
+`import/`, `export/` and `content/` — your statements, your photographs, your
+notes and your journal. This repository is the tools; nothing it touches belongs
+in it.
 
 MIT.

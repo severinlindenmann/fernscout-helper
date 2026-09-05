@@ -1,8 +1,9 @@
 # Fernscout Helper, for agents
 
-This repository is **tools, not content.** Somebody clones it, opens it with
-you, and asks for help turning their own photographs into a travel journal. What
-a run produces — `export/` and `content/` — is theirs and is gitignored.
+A toolbox for getting somebody's life **into** a Fernscout travel journal:
+extract what already exists, ask for what only they know, and write the journal's
+own format. This repository is **tools, not content** — what a run produces is
+theirs, and `import/`, `export/` and `content/` are all gitignored.
 
 ## Start here
 
@@ -12,78 +13,85 @@ a run produces — `export/` and `content/` — is theirs and is gitignored.
 | "import my Revolut statement" | `revolut-costs` |
 | "add the budget", "what did the trip cost", "I paid for the flights" | `trip-budget` |
 
-**Read the skill's `SKILL.md` before running anything**; it carries the order of
-the commands, the questions to ask, and where to stop and wait.
+**Read the skill's `SKILL.md` before running anything.** It carries the order of
+the commands, the questions to ask, and — this matters more than it sounds —
+where to stop and wait for a person.
+
+If nothing here fits what they are asking for, say so plainly and offer to do it
+by hand into the same format. A missing tool is not a reason to refuse the job.
 
 ## The one rule
 
-**You do not decide what happened.** Every word of a journal entry comes from
-what the person told you — their day notes and photo notes in
-`export/<trip>/notes.md` — and from nothing else. No weather nobody mentioned,
-no meals nobody ate, no feelings nobody expressed. An empty field beats a
-plausible fiction: a blank one is a question they can answer in four seconds, an
-invented one is a lie they may never notice, and one invented memory presented
-to somebody's family as fact is not recoverable.
+**You do not decide what happened.** Every word of an entry comes from what the
+person told you, and every number from something they can point at. No weather
+nobody mentioned, no meals nobody ate, no amount anybody estimated.
+
+An empty field beats a plausible fiction. A blank one is a question they can
+answer in four seconds; an invented one is a lie they may never notice, and one
+invented memory presented to somebody's family as fact is not recoverable. The
+journal renders a missing cost as "not counted" and a missing day as nothing at
+all — both are correct outcomes, not gaps for you to fill.
 
 Everything you write carries `status: draft`. **Publishing is never yours to
-decide** — a person removes that line, or asks you to. "It looks finished" is
-not consent, and neither is silence.
+decide** — a person removes that line, or asks you to. "It looks finished" is not
+consent, and neither is silence.
 
-## Three things that are easy to get wrong
+## Four things that are easy to get wrong
 
 - **Photographs are the most private thing here.** Every picture written into
   `content/` has its metadata stripped, because a phone writes the coordinates of
   somebody's front door into the file. Coordinates go in the frontmatter instead,
-  where they can be seen and deleted. `build.mjs` does this; do not work around
-  it.
-- **Exporting costs time and bandwidth.** Anything not already on the Mac comes
-  down from iCloud. Always run `query.mjs` first, read the size and the count
-  back to the person, and get a yes before `export.mjs`.
-- **The review page is theirs, and it takes as long as it takes.** After opening
-  it, stop. Do not poll `review.json`, do not guess that they are finished. They
-  will come back and say so — the page tells them to.
+  where they can be seen and deleted. Do not work around this.
+- **A statement says what was paid, never what it was for.** Categories are
+  proposed to the person and corrected by them, never decided quietly.
+- **Extracting costs time, bandwidth and sometimes money.** Anything not already
+  on the machine is downloaded. Always run the step that counts and estimates
+  first, read it back, and get a yes.
+- **When a person is doing something, stop.** After opening a review page or
+  handing over a question, do not poll files and do not guess that they are
+  finished. They will tell you.
 
 ## The shape of the repository
 
 ```
 .claude/skills/<name>/       one skill: SKILL.md and its scripts, together
-import/<bank>/               gitignored — statements, exactly as the bank wrote them
-export/<trip>/               gitignored — photos, photos.json, review.json, notes.md, costs.json
+.claude/skills/shared/       lib.mjs (arguments, CSV) · costfile.mjs (costs: blocks)
+import/<source>/             gitignored — statements and exports, exactly as they arrived
+export/<trip>/               gitignored — working files: photos, review.json, notes.md, costs.json
 content/<user>/trips/<trip>/ gitignored — the journal itself
 ```
 
-`.claude/skills/shared/` holds what more than one skill needs: `lib.mjs` for
-argument and CSV odds and ends, `costfile.mjs` for reading and writing a
-`costs:` block.
-
-Two rules about money, which are the prose rule applied to numbers. **A bank
-statement says what was paid, never what it was for** — categories are proposed
-to the person and corrected by them, never decided quietly. And **never invent
-or estimate an amount**: a cost nobody remembers is not recorded, and the page
-says "not counted" rather than showing a total that is wrong.
-
 Scripts are plain Node with **no dependencies** — `node:` builtins, plus
-`osxphotos`, `exiftool` and `sips` on the command line. Keep it that way: a
-person who clones this should not have to run `npm install` before their photos
-work.
+command-line tools a skill checks for. Keep it that way: somebody who clones this
+should not have to run `npm install` before their photographs work.
 
 ## Adding a skill
 
+Three jobs, and a new skill does one of them: **extract** content from where it
+is stuck, **create** what only a person knows, or **format** it into the
+journal's shape.
+
 One folder under `.claude/skills/`, holding a `SKILL.md` whose frontmatter
-`description` says *when* to use it in the words a person would actually type,
-and the scripts it runs. Shared helpers go in that folder too — nothing here is
-big enough to earn a package.
+`description` says *when* to use it in the words somebody would actually type,
+and the scripts it runs. Put anything a second skill would need in
+`shared/` rather than importing across skill folders.
+
+**Nothing here is macOS-only by design.** `icloud-export` needs a Mac because
+that is where the Photos library is; a skill for an Android export, a Windows
+folder of camera files, a Google Photos takeout or a chat log needs nothing of
+the sort. Say what a skill requires in its `SKILL.md` and check for it in the
+script — do not assume the machine.
 
 ## The wider project
 
-Fernscout itself is a self-hostable travel journal:
+Fernscout is a self-hostable travel journal:
 <https://github.com/severinlindenmann/fernscout>. The content model this
-repository writes — `trip.md`, `entries/YYYY-MM-DD-slug.md`, `media/` — is that
-project's, and `https://fernscout.ch/agent.md` is the full guide to working
-against a running instance over the network.
+repository writes — `trip.md`, `costs.md`, `entries/YYYY-MM-DD-slug.md`, `media/`
+— is that project's, and `https://fernscout.ch/agent.md` is the full guide to
+working against a running instance over the network.
 
-If the person asks for a journal on the web rather than a folder, they need an
-email address they own, and this is the prompt to hand them for a fresh session:
+If they want a journal on the web rather than a folder, they need an email
+address they own, and this is the prompt to hand them for a fresh session:
 
 > Führe mich durch das Anlegen meines eigenen Reisetagebuchs, nach der Übersicht
 > unter https://fernscout.ch/documentation.txt und der vollständigen Anleitung
