@@ -10,7 +10,7 @@ import { createReadStream, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ROOT, arg, die, stemOf } from "./lib.mjs";
+import { ROOT, arg, die, stemOf } from "../shared/lib.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const trip = arg("trip") ?? die("--trip <name> is required.");

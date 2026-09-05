@@ -8,7 +8,7 @@
 // days, the merchants and the exchange rate the trip actually cost.
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { ROOT, arg, die, splitCsv } from "../icloud-export/lib.mjs";
+import { ROOT, arg, die, splitCsv } from "../shared/lib.mjs";
 
 const file = arg("file") ?? die("--file <statement.csv> is required.");
 const from = arg("from"), to = arg("to"), trip = arg("trip");

@@ -9,7 +9,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ROOT, splitCsv, arg, has, die } from "./lib.mjs";
+import { ROOT, splitCsv, arg, has, die } from "../shared/lib.mjs";
 
 const trip = arg("trip") ?? die("--trip <name> is required, e.g. --trip algarve-2026");
 const from = arg("from"), to = arg("to"), album = arg("album");

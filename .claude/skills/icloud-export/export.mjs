@@ -8,7 +8,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, rmSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ROOT, arg, has, die } from "./lib.mjs";
+import { ROOT, arg, has, die } from "../shared/lib.mjs";
 
 const trip = arg("trip") ?? die("--trip <name> is required.");
 const dir = join(ROOT, "export", trip);

@@ -9,7 +9,8 @@ a run produces — `export/` and `content/` — is theirs and is gitignored.
 | They say | Skill |
 | --- | --- |
 | "help me export photos from iCloud on my Mac" | `icloud-export` |
-| "add my budget", "import my Revolut statement", "what did the trip cost" | `revolut-costs` |
+| "import my Revolut statement" | `revolut-costs` |
+| "add the budget", "what did the trip cost", "I paid for the flights" | `trip-budget` |
 
 **Read the skill's `SKILL.md` before running anything**; it carries the order of
 the commands, the questions to ask, and where to stop and wait.
@@ -51,9 +52,15 @@ export/<trip>/               gitignored — photos, photos.json, review.json, no
 content/<user>/trips/<trip>/ gitignored — the journal itself
 ```
 
-A bank statement says what was **paid**, never what it was **for**. Categories
-are proposed to the person and corrected by them, never decided quietly — the
-same rule as the prose, applied to money.
+`.claude/skills/shared/` holds what more than one skill needs: `lib.mjs` for
+argument and CSV odds and ends, `costfile.mjs` for reading and writing a
+`costs:` block.
+
+Two rules about money, which are the prose rule applied to numbers. **A bank
+statement says what was paid, never what it was for** — categories are proposed
+to the person and corrected by them, never decided quietly. And **never invent
+or estimate an amount**: a cost nobody remembers is not recorded, and the page
+says "not counted" rather than showing a total that is wrong.
 
 Scripts are plain Node with **no dependencies** — `node:` builtins, plus
 `osxphotos`, `exiftool` and `sips` on the command line. Keep it that way: a

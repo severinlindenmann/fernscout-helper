@@ -8,13 +8,13 @@
 // costs.json and running again is the way to fix one.
 import { readFileSync, writeFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { ROOT, arg, has, die } from "../icloud-export/lib.mjs";
+import { ROOT, arg, has, die } from "../shared/lib.mjs";
+import { CATEGORIES, costLine, readCostLines, writeCostLines } from "../shared/costfile.mjs";
 
 const trip = arg("trip") ?? die("--trip <name> is required.");
 const user = arg("user") ?? die("--user <name> is required.");
 const dry = has("dry-run");
 
-const CATEGORIES = ["preparation", "flights", "accommodation", "food", "transport", "activities", "other"];
 const costsFile = join(ROOT, "export", trip, "costs.json");
 if (!existsSync(costsFile)) die(`No ${costsFile}. Run parse.mjs --trip ${trip} … first.`);
 const { transactions, rates } = JSON.parse(readFileSync(costsFile, "utf8"));
@@ -45,19 +45,17 @@ for (const [day, list] of Object.entries(byDay).sort()) {
   })[0];
   if (!file) { orphaned.push([day, list]); continue; }
   const path = join(TRIP, "entries", file);
-  const text = readFileSync(path, "utf8");
 
-  const block = ["costs:  " + MARK,
-    ...list.map((t) => `  - { label: ${JSON.stringify(t.label)}, amount: ${Math.abs(t.amount)}, ` +
-      `category: "${t.category ?? "other"}", currency: "${t.currency}" }`)].join("\n");
-
-  // replace the block we wrote last time, or insert one above `status:`
-  const existing = new RegExp(`^costs:  ${MARK}\\n(?:  - .*\\n)*`, "m");
-  const next = existing.test(text)
-    ? text.replace(existing, block + "\n")
-    : text.replace(/^status:/m, block + "\nstatus:");
-  if (next !== text) { if (!dry) writeFileSync(path, next); touched++; }
-  console.log(`${dry ? "would write" : "wrote"}  ${file}  ${list.length} cost(s)`);
+  // Somebody may have written costs of their own on this day. Keep those, and
+  // replace only the lines a previous import wrote.
+  const { own } = readCostLines(readFileSync(path, "utf8"));
+  const mine = list.map((t) => costLine({
+    label: t.label, amount: Math.abs(t.amount), currency: t.currency, category: t.category ?? "other",
+  }, true));
+  if (!dry && writeCostLines(path, [...own, ...mine])) touched++;
+  else if (dry) touched++;
+  console.log(`${dry ? "would write" : "wrote"}  ${file}  ${mine.length} cost(s)` +
+    (own.length ? `, keeping ${own.length} of yours` : ""));
 }
 
 // trip.md's rates: what one unit of the foreign currency actually cost, taken

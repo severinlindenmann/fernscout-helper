@@ -41,6 +41,7 @@ Every day starts as a **draft** — nothing is published until you say so.
 | --- | --- |
 | `icloud-export` | "help me export photos from iCloud on my Mac" |
 | `revolut-costs` | "add my budget from this Revolut statement" |
+| `trip-budget` | "what did the trip cost", "add the flights" |
 
 More will follow. Each one lives in `.claude/skills/<name>/` with its
 instructions in `SKILL.md` and its scripts beside them, so a skill is one folder

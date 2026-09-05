@@ -7,7 +7,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync, existsSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
-import { ROOT, arg, die, stemOf } from "./lib.mjs";
+import { ROOT, arg, die, stemOf } from "../shared/lib.mjs";
 
 const trip = arg("trip") ?? die("--trip <name> is required.");
 const user = arg("user") ?? die("--user <name> is required — the folder your journal lives in.");
