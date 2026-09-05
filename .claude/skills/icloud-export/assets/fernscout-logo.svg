@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 96" width="360" height="96">
+  <title>Fernscout — logo (chosen direction: the waymark)</title>
+  <!--
+    Concept: the Swiss Wanderweg waymark. Swiss hiking routes are signed with
+    a painted yellow lozenge — the mark that tells you both that you are on
+    the route and which way it runs. Fernscout is a scout that walks ahead of
+    the traveller and reports back, so the mark shows three things at once:
+    the trail (the bent cream route), the marker planted on it (the yellow
+    lozenge), and the scout already further along than you are (the green dot
+    at the leading end).
+
+    Continuity with Fernscout: the bent route line and the green destination
+    dot are carried over verbatim from the envelope mark. The container — a
+    navy rounded square, rx 21 at 96px — is unchanged, so the icon swaps into
+    every existing slot without relayout.
+
+    Chosen over alt-farsight.svg and alt-cairn.svg because it is the only one
+    of the three whose silhouette survives a true 16x16 render: a filled
+    lozenge is one convex shape with no interior detail to lose, where the
+    lens direction collapsed into a grey circle and the cairn's stacked stones
+    merged into a single blob.
+  -->
+  <rect width="360" height="96" fill="#fffaf0" />
+
+  <!-- mark -->
+  <g>
+    <rect x="0" y="0" width="96" height="96" rx="21" fill="#1e293b" />
+    <!-- the trail: bent, not straight — the route language from Fernscout -->
+    <path
+      d="M18 75 L34 62 L47 57 L63 37 L78 24"
+      fill="none"
+      stroke="#fffaf0"
+      stroke-width="5.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <!-- the waymark, planted on the trail and covering it: you are here -->
+    <path
+      d="M48 27 L71 50 L48 73 L25 50 Z"
+      fill="#ffd23f"
+      stroke="#1e293b"
+      stroke-width="3"
+      stroke-linejoin="round"
+    />
+    <!-- the scout, already ahead of you -->
+    <circle cx="78" cy="24" r="6.5" fill="#22c55e" stroke="#1e293b" stroke-width="1.8" />
+  </g>
+
+  <!-- wordmark -->
+  <text
+    x="120"
+    y="62"
+    font-family="Fredoka, 'Trebuchet MS', sans-serif"
+    font-size="44"
+    font-weight="700"
+    fill="#1e293b"
+  >Fernscout</text>
+</svg>

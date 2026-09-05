@@ -1,0 +1,8 @@
+# Everything a run produces. This repository is the tools; the photographs,
+# the notes and the journal are the person's, and none of it belongs in git.
+/export/
+/content/
+
+# Node, editors, macOS
+node_modules/
+.DS_Store
