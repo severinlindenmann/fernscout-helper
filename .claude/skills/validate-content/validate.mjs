@@ -348,7 +348,7 @@ function checkJournal(user, only) {
       }
 
       const gallery = entry.data.gallery;
-      if ((!gallery || (Array.isArray(gallery) && gallery.length === 0)) && tracks.photos !== false) {
+      if ((!gallery || (Array.isArray(gallery) && gallery.length === 0)) && tracks.photos !== false && !declined.has("photos")) {
         tip(entryWhere, "has no photographs", "POST them to …/trips/<trip>/media with this day's slug");
       } else if (Array.isArray(gallery)) {
         gallery.forEach((item, index) => {
