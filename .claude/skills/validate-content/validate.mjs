@@ -76,6 +76,8 @@ const typeOf = (value) => (Array.isArray(value) ? "array" : value === null ? "nu
  * for the keys that never cross the API at all.
  */
 let API = { trip: {}, day: {}, journal: {}, cost: {}, gallery: {} };
+/** The whole published document, kept so a `$ref` inside a schema resolves. */
+let DOC = null;
 
 function ruleFor(scope, key, local = {}) {
   const published = API[scope]?.properties?.[key];
@@ -134,12 +136,55 @@ function checkKeys(where, keys, data, { tips = true, scope = null } = {}) {
       continue;
     }
     checkValue(where, key, rule, value);
+    const published = scope ? API[scope]?.properties?.[key] : null;
+    if (published?.items) checkList(`${where} ${key}`, published, value);
   }
   for (const key of Object.keys(data)) {
     if (known.includes(key)) continue;
     const near = suggest(key, known.filter((k) => !keys[k].apiOnly));
     error(where, `${key} is not a field`, near ? `did you mean ${near}?` : "nothing reads it — it will be dropped");
   }
+}
+
+/**
+ * An object against a schema the instance published — used for the shapes that
+ * live *inside* a field: a `people:` entry, a figure in `travellers:`, a cost
+ * line, a gallery item, the `budget` block.
+ *
+ * These used to be unchecked or checked against a copy kept here, and the copy
+ * was the thinner of the two: a `people:` entry with a name and no email
+ * passed every check in this file and was refused by the instance, which is
+ * the failure this whole pair exists to move earlier.
+ */
+function checkObject(where, schema, value) {
+  const resolved = schema?.$ref ? deref(schema, DOC) : schema;
+  if (!resolved?.properties) return;
+  if (typeOf(value) !== "object") {
+    error(where, `is ${typeOf(value)}`, "an object");
+    return;
+  }
+  for (const key of resolved.required ?? []) {
+    if (value[key] === undefined) error(`${where}.${key}`, "is missing", "required");
+  }
+  for (const [key, rule] of Object.entries(resolved.properties)) {
+    if (value[key] === undefined) continue;
+    checkValue(where, key, rule, value[key]);
+  }
+  if (resolved.additionalProperties === false) {
+    for (const key of Object.keys(value)) {
+      if (key in resolved.properties) continue;
+      const near = suggest(key, Object.keys(resolved.properties));
+      error(`${where}.${key}`, "is not a field here", near ? `did you mean ${near}?` : "it will be refused");
+    }
+  }
+}
+
+/** Every item of a list the document describes, against the item's schema. */
+function checkList(where, schema, value) {
+  if (!Array.isArray(value)) return;
+  const items = schema?.items;
+  if (!items) return;
+  value.forEach((item, index) => checkObject(`${where}[${index}]`, items, item));
 }
 
 /** Cost lines, wherever they appear. */
@@ -219,12 +264,20 @@ function checkJournal(user, only) {
       const entryWhere = `content/${user}/trips/${trip.id}/entries/${entry.file}`;
       for (const p of entry.problems) error(entryWhere, `line ${p.line}: ${p.why}`, p.text);
 
-      // A day that says `without: [costs]` has answered the question. Tipping
-      // it to add costs would be asking again, and asking again is how an
-      // agent ends up inventing an amount to make a list go quiet.
+      // Three things this day should not be nudged about, because the answer
+      // is already settled and asking again is how an agent ends up inventing
+      // a value to make a list go quiet:
+      //
+      //   - the day said `without: [costs]` — it has answered;
+      //   - the trip does not track it at all;
+      //   - the journal has one language, so there is nothing to translate.
       for (const declinedTrack of [entry.data.without ?? []].flat()) {
         errored.add(`${entryWhere}|${declinedTrack === "coordinates" ? "lat" : declinedTrack}`);
       }
+      for (const [track, on] of Object.entries(tracks)) {
+        if (on === false) errored.add(`${entryWhere}|${track === "coordinates" ? "lat" : track}`);
+      }
+      if (locales.length < 2) errored.add(`${entryWhere}|translations`);
       checkKeys(entryWhere, MODEL["entries/YYYY-MM-DD-slug.md"].keys, entry.data, { scope: "day" });
       if (!entry.body) error(entryWhere, "has no prose", "the body under the frontmatter is the day itself");
 
@@ -260,8 +313,11 @@ function checkJournal(user, only) {
         if (tracks[track] === false || answered || declined.has(track)) continue;
         errored.add(`${entryWhere}|${track === "coordinates" ? "lat" : track}`);
         error(entryWhere, `the trip tracks ${track} and this day says nothing about it`,
-          `send it, or say there was none — \`"${track}": false\` on the write, which is ` +
-          `written into the day as \`without: [${track}]\`. Ask the person; never invent one`);
+          `Ask the person what this day had. If it had some, send it. If it genuinely had ` +
+          `none, \`"${track}": false\` on the write says so, and is written into the day as ` +
+          `\`without: [${track}]\`. A trip-level costs.md is NOT an answer for a day — the ` +
+          `budget is what was paid before leaving, not what this day cost. Never send false ` +
+          `to make this line go away.`);
       }
 
       // An error and not a warning: the instance refuses this day outright
@@ -277,7 +333,7 @@ function checkJournal(user, only) {
       }
 
       const gallery = entry.data.gallery;
-      if (!gallery || (Array.isArray(gallery) && gallery.length === 0)) {
+      if ((!gallery || (Array.isArray(gallery) && gallery.length === 0)) && tracks.photos !== false) {
         tip(entryWhere, "has no photographs", "POST them to …/trips/<trip>/media with this day's slug");
       } else if (Array.isArray(gallery)) {
         gallery.forEach((item, index) => {
@@ -351,6 +407,7 @@ try {
 
   // Everything the instance is willing to say about itself, read once. From
   // here on this script has no opinion of its own about what a field may be.
+  DOC = doc;
   API = {
     trip: requestSchema(doc, "/api/v1/{user}/trips", "post") ?? {},
     day: requestSchema(doc, "/api/v1/{user}/trips/{trip}/days", "post") ?? {},
