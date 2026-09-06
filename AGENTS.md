@@ -72,6 +72,7 @@ there is any doubt about whether they meant the website or just the file.
 .claude/skills/shared/       lib.mjs (arguments, CSV) · costfile.mjs (costs: blocks)
                              frontmatter.mjs (reading YAML) · model.mjs (every option
                              there is) · journal.mjs (a folder, parsed) · api.mjs
+                             selftest.mjs (do these tools still agree with the site?)
 import/<source>/             gitignored — statements and exports, exactly as they arrived
 export/<trip>/               gitignored — working files: photos, review.json, notes.md, costs.json
 content/<user>/trips/<trip>/ gitignored — the journal itself
@@ -80,6 +81,32 @@ content/<user>/trips/<trip>/ gitignored — the journal itself
 Scripts are plain Node with **no dependencies** — `node:` builtins, plus
 command-line tools a skill checks for. Keep it that way: somebody who clones this
 should not have to run `npm install` before their photographs work.
+
+## When the site changes under you
+
+**These tools follow an instance rather than defining anything**, and that is
+the whole design: types, enums, required lists and the upload limits all come
+from `<site>/openapi.json` and `<site>/api/health` at run time. What they do
+keep is the shape of the *files* — which keys a `trip.md` may carry, which of
+them never travel — because a contract about HTTP cannot describe that.
+
+That last part can fall behind, and did once. The site gained a third answer
+for a day whose costs nobody recorded (`unrecorded: [costs]`, beside
+`without: [costs]`), and these tools did not know the key: a perfectly good
+journal came back with two errors, both wrong. The validator was working
+correctly and had simply not been told.
+
+```bash
+node .claude/skills/shared/selftest.mjs
+```
+
+Three test journals under `content/` — one with every option set, one valid
+and incomplete, one with a planted fault of each kind — run through the
+validator, each checked against what it should say. **Run it after the site is
+deployed with anything new**, and when a validation message looks wrong.
+
+If it reports a real field as unknown, the fix is in `shared/model.mjs`. If it
+stops noticing a planted fault, the fix is in `validate-content/validate.mjs`.
 
 ## Adding a skill
 

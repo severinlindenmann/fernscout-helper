@@ -271,7 +271,10 @@ function checkJournal(user, only) {
       //   - the day said `without: [costs]` — it has answered;
       //   - the trip does not track it at all;
       //   - the journal has one language, so there is nothing to translate.
-      for (const declinedTrack of [entry.data.without ?? []].flat()) {
+      for (const declinedTrack of [
+        ...[entry.data.without ?? []].flat(),
+        ...[entry.data.unrecorded ?? []].flat(),
+      ]) {
         errored.add(`${entryWhere}|${declinedTrack === "coordinates" ? "lat" : declinedTrack}`);
       }
       for (const [track, on] of Object.entries(tracks)) {
@@ -304,7 +307,13 @@ function checkJournal(user, only) {
       // nothing about something the trip keeps track of, and names both how to
       // send it and how to decline it. Checked here so that is found before a
       // publish run rather than in the middle of one.
-      const declined = new Set([entry.data.without ?? []].flat());
+      // Both answers settle the row. `unrecorded` is B560's third one — *there
+      // was some of this and nobody has it* — and a day carrying it has
+      // answered the trip just as surely as one that declined.
+      const declined = new Set([
+        ...[entry.data.without ?? []].flat(),
+        ...[entry.data.unrecorded ?? []].flat(),
+      ]);
       for (const [track, answered] of [
         ["costs", Array.isArray(entry.data.costs) && entry.data.costs.length > 0],
         ["coordinates", entry.data.lat !== undefined && entry.data.lng !== undefined],

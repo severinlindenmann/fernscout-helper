@@ -305,9 +305,17 @@ for (const trip of journal.trips) {
                        "transportMode", "transportFrom", "transportTo", "travelScene", "test", "translations"]) {
       if (entry.data[key] !== undefined && entry.data[key] !== null) body[key] = entry.data[key];
     }
-    // `without: [costs]` on disk is how a day says it deliberately has none.
-    // Over the API that is the field set to false, not a list.
+    // The two answers that are not values. On disk they are their own lines;
+    // over the API they are the field itself, which is what makes them
+    // findable — a caller stuck on `costs` reads about `costs`.
+    //
+    //   without:    [costs]  →  "costs": false      there was none
+    //   unrecorded: [costs]  →  "costs": "unknown"  there was some and it is gone
+    //
+    // Sending the wrong one writes a false statement into somebody's journal,
+    // so they are mapped separately rather than folded together. B560.
     for (const track of entry.data.without ?? []) body[track] = false;
+    for (const track of entry.data.unrecorded ?? []) body[track] = "unknown";
 
     const existing = already.get(`${date}|${entry.data.title}`);
     let slug = existing?.slug ?? null;

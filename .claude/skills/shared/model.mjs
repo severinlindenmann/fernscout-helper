@@ -128,6 +128,14 @@ export const MODEL = {
       test: { noTip: true, note: "content nobody lived, written to prove the pipeline works" },
       translations: { type: "object", tip: "the title and prose in the journal's other languages. Required when the journal declares more than one" },
       without: { type: "array", fileOnly: true, note: "what this day deliberately has none of — written by sending e.g. costs: false" },
+      unrecorded: {
+        type: "array",
+        fileOnly: true,
+        note:
+          "what this day had and nobody wrote down — written by sending e.g. " +
+          'costs: "unknown". A different statement from `without`, and kept apart on ' +
+          "purpose: *there was none* against *there was some and it is gone*",
+      },
       // The three request-only fields on a day. They are instructions to the
       // server, not content: nothing on disk carries them, and a file that did
       // would be describing a call rather than a day.
