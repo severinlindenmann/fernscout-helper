@@ -1,6 +1,7 @@
 ---
 budget:
   total: 1000
+  days: -3
   currency: CHF
 costs:
   - label: Flight

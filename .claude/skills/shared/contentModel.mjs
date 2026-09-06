@@ -34,13 +34,17 @@
 //
 // `path` is `""` (the file's root — the whole-file `known-key` list),
 // a plain key (`"title"`), or — the vocabulary's one wildcard — something
-// with a `.` or a `*` in it (`"features.*"`). Nothing published today uses
-// the latter: `cost-line-known-keys` and `gallery-item-known-keys` are
-// `named` checks precisely because a cost line or gallery item is a member
+// with a `.` or a `*` in it (`"features.*"`). B644 is the first rule
+// published at one: `config.json`'s `features.*` carries `assert: "shape"`
+// with a `members` map, folded below into `MODEL[file].shapes[container]`
+// rather than into `keys` — see that code for why a member's shape cannot be
+// a flat per-key rule. `cost-line-known-keys` and `gallery-item-known-keys`
+// stay `named` checks rather than a second `shape`/`known-key` pair at a
+// wildcard path, precisely because a cost line or gallery item is a member
 // of an *array*, which this vocabulary's one wildcard cannot address (see the
-// document's own `named[].because`). A `path` this client cannot fold into
-// one of its flat per-key rules is not attempted — nothing today needs it to
-// be.
+// document's own `named[].because`). A nested, non-wildcard path this client
+// cannot fold anywhere (`"budget.total"`) is not attempted — nothing
+// published today needs one.
 //
 // ## COST_KEYS / GALLERY_KEYS
 //
@@ -104,6 +108,14 @@ const IMPLEMENTED_NAMED = [
   "plan-only-for-upcoming-trips",
   "cost-line-known-keys",
   "gallery-item-known-keys",
+  // B644: both hand-written already, in `validate-content/validate.mjs` —
+  // `isRealCalendarDate()` (an entry's `date`, no `2026-13-40`) and the
+  // `budget.total`/`budget.days` positivity check beside the existing
+  // "budget needs all three" one. Wiring these two ids onto the checks that
+  // already run is the whole point: writing a *second* pair would be the
+  // rotted-copy failure W41 exists to end, one level down.
+  "entry-date-is-a-real-calendar-date",
+  "budget-total-and-days-are-positive",
 ];
 
 /**
@@ -163,6 +175,7 @@ export function interpretManifest(doc) {
   for (const [file, spec] of Object.entries(filesSpec)) {
     const rules = rulesByFile.get(file) ?? [];
     const keys = {};
+    const shapes = {};
     let knownKeyList = null;
 
     for (const rule of rules) {
@@ -179,11 +192,25 @@ export function interpretManifest(doc) {
         if (rule.assert === "known-key" && Array.isArray(rule.keys)) knownKeyList = rule.keys;
         continue;
       }
-      // The one wildcard this vocabulary has (`features.*`) and any nested
-      // member path (`"budget.total"`) address something inside one key's
-      // value, not the flat per-key rule `checkKeys()` reads. Nothing
-      // published today emits one; when something does, it belongs to a
-      // `shape` this file does not yet fold anywhere, not to a top-level key.
+      // The one wildcard this vocabulary has (`features.*`) addresses every
+      // member of a map, not one top-level key — `known-key`/`type`/etc at a
+      // plain path fold into the flat per-key rule `checkKeys()` reads;
+      // `shape` at a wildcard path describes the shape of every MEMBER
+      // instead (B644 — `config.json`'s `features.*` is the first one
+      // published), and is folded into `shapes[container]` below rather than
+      // into `keys`, so a caller can check each member's own nested fields
+      // (`value.enabled`) against `rule.members` — the exact thing the
+      // server's own interpreter got backwards before B616 fixed it there:
+      // it compared a wildcard member's whole VALUE against `rule.members`
+      // keyed by member NAME, instead of checking each member's nested
+      // fields against `rule.members`. A nested nonwildcard path
+      // (`"budget.total"`) is not published by anything today and still
+      // folds nowhere — there is no container to record it against.
+      if (path.endsWith(".*") && rule.assert === "shape" && rule.members && typeof rule.members === "object") {
+        const container = path.slice(0, -2);
+        shapes[container] = { members: rule.members, because: rule.because };
+        continue;
+      }
       if (path.includes(".") || path.includes("*")) continue;
 
       const key = path;
@@ -215,6 +242,23 @@ export function interpretManifest(doc) {
           break;
         case "never-over-api":
           local.fileOnly = true;
+          // A fileOnly key can never appear in any request schema, by
+          // definition — it never crosses the API at all — so `ruleFor()`'s
+          // `published.description` fallback in validate.mjs (the live
+          // schema's own wording, preferred everywhere it exists: see that
+          // function's "the document's own wording is better than anything
+          // written here") never has anything to offer one. The document's
+          // own `because` is the only prose that will ever exist for a key
+          // like this, and B620 put it there for exactly the two that had
+          // none anywhere else (`cover`, `travellers`) — so this is where the
+          // client reads it in as the key's tip, rather than the tip staying
+          // hand-copied into `model.mjs` and nowhere else. Every other assert
+          // kind is left alone: `local.note` already carries the same
+          // `because` (below) for a required-but-missing error, and a key
+          // that DOES cross the API keeps deferring to the live description,
+          // which is more likely to be current than a `because` written once
+          // and never revisited.
+          if (rule.because) local.tip = rule.because;
           break;
         case "shape":
         case "known-key":
@@ -242,7 +286,19 @@ export function interpretManifest(doc) {
       });
     }
 
-    MODEL[file] = { what: spec?.what, api: spec?.api, optional: spec?.optional, keys };
+    // B620/B644: `files[<file>].noTip` — key names the document itself says
+    // are not worth offering as a tip, because there is nothing to set:
+    // `test:` is content nobody lived, and offering it as a choice is the
+    // exact defect this exists to remove. Sibling to `what`/`api` on the
+    // file's own spec, not a rule — `checkKeys()` already skips a `noTip`
+    // key exactly like a `body` one (validate.mjs's "nobody should be
+    // nudged towards `test`").
+    for (const key of Array.isArray(spec?.noTip) ? spec.noTip : []) {
+      if (!keys[key]) keys[key] = {};
+      keys[key].noTip = true;
+    }
+
+    MODEL[file] = { what: spec?.what, api: spec?.api, optional: spec?.optional, keys, shapes };
     totalKeys += Object.keys(keys).length;
   }
 
