@@ -1,0 +1,734 @@
+{
+ "snapshotOf": "https://fernscout.ch",
+ "snapshotTakenAt": "2026-09-06T18:58:58.198Z",
+ "document": {
+  "contentModel": 1,
+  "files": {
+   "config.json": {
+    "what": "who this journal belongs to, and what it switches on",
+    "api": "POST /api/v1/journals to create, PATCH /api/v1/{user}/config to change"
+   },
+   "trip.md": {
+    "what": "the trip itself. Frontmatter, then the intro prose as the body",
+    "api": "POST /api/v1/{user}/trips",
+    "noTip": [
+     "test"
+    ]
+   },
+   "entries/YYYY-MM-DD-slug.md": {
+    "what": "one update. Several per day is normal",
+    "api": "POST /api/v1/{user}/trips/{trip}/days, then …/days/{slug}/publish",
+    "noTip": [
+     "test"
+    ]
+   },
+   "costs.md": {
+    "what": "the budget and what was spent before leaving. Optional",
+    "api": "PUT /api/v1/{user}/trips/{trip}/costs",
+    "optional": true
+   },
+   "plan.md": {
+    "what": "the planned route, for a trip that has not happened yet. Optional",
+    "api": "not over the API today — write the file",
+    "optional": true
+   }
+  },
+  "rules": [
+   {
+    "where": "config.json",
+    "path": "ownerName",
+    "assert": "never-in-file",
+    "because": "the file carries this as owner.name"
+   },
+   {
+    "where": "config.json",
+    "path": "ownerNickname",
+    "assert": "never-in-file",
+    "because": "the file carries this as owner.nickname"
+   },
+   {
+    "where": "config.json",
+    "path": "ownerTel",
+    "assert": "never-in-file",
+    "because": "the file carries this as owner.tel"
+   },
+   {
+    "where": "config.json",
+    "path": "username",
+    "assert": "never-in-file",
+    "because": "the folder name is the username"
+   },
+   {
+    "where": "config.json",
+    "path": "title",
+    "assert": "required"
+   },
+   {
+    "where": "config.json",
+    "path": "title",
+    "assert": "type",
+    "type": "string"
+   },
+   {
+    "where": "config.json",
+    "path": "owner",
+    "assert": "required"
+   },
+   {
+    "where": "config.json",
+    "path": "owner",
+    "assert": "type",
+    "type": "object"
+   },
+   {
+    "where": "config.json",
+    "path": "owner",
+    "assert": "never-over-api"
+   },
+   {
+    "where": "config.json",
+    "path": "tagline",
+    "assert": "type",
+    "type": "string"
+   },
+   {
+    "where": "config.json",
+    "path": "startLocation",
+    "assert": "type",
+    "type": "string"
+   },
+   {
+    "where": "config.json",
+    "path": "defaultLocale",
+    "assert": "type",
+    "type": "string"
+   },
+   {
+    "where": "config.json",
+    "path": "locales",
+    "assert": "type",
+    "type": "array"
+   },
+   {
+    "where": "config.json",
+    "path": "baseCurrency",
+    "assert": "type",
+    "type": "string"
+   },
+   {
+    "where": "config.json",
+    "path": "displayCurrencies",
+    "assert": "type",
+    "type": "array"
+   },
+   {
+    "where": "config.json",
+    "path": "manualRates",
+    "assert": "type",
+    "type": "object"
+   },
+   {
+    "where": "config.json",
+    "path": "features",
+    "assert": "type",
+    "type": "object"
+   },
+   {
+    "where": "config.json",
+    "path": "travellers",
+    "assert": "type",
+    "type": "array",
+    "because": "how the walking figures are drawn when a trip does not say. There is no API call for the journal's default party — it is read from this file, and a trip's own travellers: block is set through …/trips/<trip>/travellers"
+   },
+   {
+    "where": "config.json",
+    "path": "travellers",
+    "assert": "never-over-api",
+    "because": "how the walking figures are drawn when a trip does not say. There is no API call for the journal's default party — it is read from this file, and a trip's own travellers: block is set through …/trips/<trip>/travellers"
+   },
+   {
+    "where": "config.json",
+    "path": "media",
+    "assert": "type",
+    "type": "object"
+   },
+   {
+    "where": "config.json",
+    "path": "media",
+    "assert": "never-over-api"
+   },
+   {
+    "where": "config.json",
+    "path": "",
+    "assert": "known-key",
+    "keys": [
+     "title",
+     "owner",
+     "tagline",
+     "visibility",
+     "startLocation",
+     "defaultLocale",
+     "locales",
+     "baseCurrency",
+     "displayCurrencies",
+     "units",
+     "manualRates",
+     "features",
+     "travellers",
+     "media"
+    ]
+   },
+   {
+    "where": "trip.md",
+    "path": "id",
+    "assert": "required"
+   },
+   {
+    "where": "trip.md",
+    "path": "id",
+    "assert": "type",
+    "type": "string",
+    "because": "must equal the folder name"
+   },
+   {
+    "where": "trip.md",
+    "path": "id",
+    "assert": "pattern",
+    "pattern": "^[a-z0-9][a-z0-9-]*$",
+    "expected": "lowercase letters, digits and hyphens"
+   },
+   {
+    "where": "trip.md",
+    "path": "title",
+    "assert": "required"
+   },
+   {
+    "where": "trip.md",
+    "path": "title",
+    "assert": "type",
+    "type": "string"
+   },
+   {
+    "where": "trip.md",
+    "path": "start",
+    "assert": "required"
+   },
+   {
+    "where": "trip.md",
+    "path": "start",
+    "assert": "type",
+    "type": "string",
+    "because": "a trip without start and end is skipped at every reading path"
+   },
+   {
+    "where": "trip.md",
+    "path": "start",
+    "assert": "pattern",
+    "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+    "expected": "a date like 2026-06-24"
+   },
+   {
+    "where": "trip.md",
+    "path": "end",
+    "assert": "required"
+   },
+   {
+    "where": "trip.md",
+    "path": "end",
+    "assert": "type",
+    "type": "string"
+   },
+   {
+    "where": "trip.md",
+    "path": "end",
+    "assert": "pattern",
+    "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+    "expected": "a date like 2026-06-24"
+   },
+   {
+    "where": "trip.md",
+    "path": "tagline",
+    "assert": "type",
+    "type": "string"
+   },
+   {
+    "where": "trip.md",
+    "path": "intro",
+    "assert": "never-in-file",
+    "because": "the prose under the frontmatter; the API calls it intro"
+   },
+   {
+    "where": "trip.md",
+    "path": "listed",
+    "assert": "type",
+    "type": "boolean",
+    "because": "false keeps a public trip out of the sitemap, the feed and the switcher — it only ever narrows"
+   },
+   {
+    "where": "trip.md",
+    "path": "people",
+    "assert": "type",
+    "type": "array"
+   },
+   {
+    "where": "trip.md",
+    "path": "travellers",
+    "assert": "type",
+    "type": "array"
+   },
+   {
+    "where": "trip.md",
+    "path": "rates",
+    "assert": "type",
+    "type": "object"
+   },
+   {
+    "where": "trip.md",
+    "path": "tracks",
+    "assert": "type",
+    "type": "object"
+   },
+   {
+    "where": "trip.md",
+    "path": "translations",
+    "assert": "type",
+    "type": "object"
+   },
+   {
+    "where": "trip.md",
+    "path": "cover",
+    "assert": "type",
+    "type": "string",
+    "because": "a photograph from the trip for the index and the OG image. It cannot be set at create time — the media does not exist yet"
+   },
+   {
+    "where": "trip.md",
+    "path": "cover",
+    "assert": "never-over-api",
+    "because": "a photograph from the trip for the index and the OG image. It cannot be set at create time — the media does not exist yet"
+   },
+   {
+    "where": "trip.md",
+    "path": "test",
+    "assert": "type",
+    "type": "boolean"
+   },
+   {
+    "where": "trip.md",
+    "path": "",
+    "assert": "known-key",
+    "keys": [
+     "id",
+     "title",
+     "start",
+     "end",
+     "tagline",
+     "listed",
+     "people",
+     "travellers",
+     "rates",
+     "tracks",
+     "translations",
+     "cover",
+     "status",
+     "accent",
+     "visibility",
+     "costsVisibility",
+     "test"
+    ]
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "title",
+    "assert": "required"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "title",
+    "assert": "type",
+    "type": "string"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "date",
+    "assert": "required"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "date",
+    "assert": "type",
+    "type": "string",
+    "because": "must match the filename, and fall inside the trip"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "date",
+    "assert": "pattern",
+    "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+    "expected": "a date like 2026-06-24"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "content",
+    "assert": "required"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "content",
+    "assert": "type",
+    "type": "string"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "time",
+    "assert": "type",
+    "type": "string"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "time",
+    "assert": "pattern",
+    "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+    "expected": "24-hour, like 18:40"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "location",
+    "assert": "type",
+    "type": "string"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "country",
+    "assert": "type",
+    "type": "string"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "countryCode",
+    "assert": "type",
+    "type": "string",
+    "because": "draws the flag"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "countryCode",
+    "assert": "pattern",
+    "pattern": "^[A-Za-z]{2}$",
+    "expected": "two letters, ISO 3166-1 alpha-2 — capitals are the house style, like PT"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "lat",
+    "assert": "type",
+    "type": "number"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "lng",
+    "assert": "type",
+    "type": "number"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "transportFrom",
+    "assert": "type",
+    "type": "string"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "transportTo",
+    "assert": "type",
+    "type": "string"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "tags",
+    "assert": "type",
+    "type": "array"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "costs",
+    "assert": "type",
+    "type": "array"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "translations",
+    "assert": "type",
+    "type": "object"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "without",
+    "assert": "type",
+    "type": "array"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "without",
+    "assert": "never-over-api"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "unrecorded",
+    "assert": "type",
+    "type": "array"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "unrecorded",
+    "assert": "never-over-api"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "gallery",
+    "assert": "type",
+    "type": "array"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "gallery",
+    "assert": "never-over-api"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "cover",
+    "assert": "type",
+    "type": "string"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "cover",
+    "assert": "never-over-api"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "status",
+    "assert": "type",
+    "type": "string",
+    "because": "publishing is a separate call, never a field"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "status",
+    "assert": "enum",
+    "values": [
+     "draft"
+    ]
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "status",
+    "assert": "never-over-api",
+    "because": "publishing is a separate call, never a field"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "slug",
+    "assert": "type",
+    "type": "string"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "slug",
+    "assert": "never-over-api"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "weather",
+    "assert": "never-in-file",
+    "because": "asks the server to look up what the weather was"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "weatherData",
+    "assert": "never-in-file",
+    "because": "a reading somebody actually took"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "coordinates",
+    "assert": "never-in-file",
+    "because": "only ever false — this day has no one place"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "photos",
+    "assert": "never-in-file",
+    "because": "only ever false — this day has no photographs"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "idempotency_key",
+    "assert": "never-in-file",
+    "because": "names one write, so a retry is safe"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "test",
+    "assert": "type",
+    "type": "boolean"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "",
+    "assert": "known-key",
+    "keys": [
+     "title",
+     "date",
+     "content",
+     "time",
+     "location",
+     "country",
+     "countryCode",
+     "lat",
+     "lng",
+     "transportMode",
+     "travelScene",
+     "transportFrom",
+     "transportTo",
+     "tags",
+     "costs",
+     "translations",
+     "without",
+     "unrecorded",
+     "gallery",
+     "cover",
+     "status",
+     "slug",
+     "test"
+    ]
+   },
+   {
+    "where": "costs.md",
+    "path": "budget",
+    "assert": "type",
+    "type": "object"
+   },
+   {
+    "where": "costs.md",
+    "path": "costs",
+    "assert": "type",
+    "type": "array"
+   },
+   {
+    "where": "costs.md",
+    "path": "",
+    "assert": "known-key",
+    "keys": [
+     "budget",
+     "costs"
+    ]
+   },
+   {
+    "where": "plan.md",
+    "path": "route",
+    "assert": "type",
+    "type": "array"
+   },
+   {
+    "where": "plan.md",
+    "path": "",
+    "assert": "known-key",
+    "keys": [
+     "route"
+    ]
+   },
+   {
+    "where": "config.json",
+    "path": "features.*",
+    "assert": "shape",
+    "members": {
+     "enabled": "boolean"
+    },
+    "because": "each capability is on or off; anything else is refused"
+   },
+   {
+    "where": "config.json",
+    "path": "features",
+    "assert": "known-key",
+    "keys": [
+     "reactions",
+     "costs",
+     "push",
+     "mail",
+     "whatsapp",
+     "auth",
+     "signup",
+     "contacts",
+     "postcards",
+     "photobook",
+     "logging",
+     "credits",
+     "addressLookup",
+     "weather",
+     "analytics"
+    ]
+   }
+  ],
+  "named": [
+   {
+    "kind": "named",
+    "id": "day-answers-tracked-fields",
+    "because": "needs the trip's tracks: and the day's without:/unrecorded: together",
+    "where": [
+     "trip.md",
+     "entries/YYYY-MM-DD-slug.md"
+    ]
+   },
+   {
+    "kind": "named",
+    "id": "day-translations-match-locales",
+    "because": "a day writing only its own language is fine when the journal declares one locale, and refused when it declares more — needs the journal's locales and written language together with the day's own translations:",
+    "where": [
+     "config.json",
+     "entries/YYYY-MM-DD-slug.md"
+    ]
+   },
+   {
+    "kind": "named",
+    "id": "plan-only-for-upcoming-trips",
+    "because": "plan.md is read only once the trip's own status is upcoming — a cross-file read of trip.md",
+    "where": [
+     "trip.md",
+     "plan.md"
+    ]
+   },
+   {
+    "kind": "named",
+    "id": "cost-line-known-keys",
+    "because": "each item of a costs: array needs its own known-key check against label/amount/currency/category; the one wildcard this vocabulary has (features.*) reaches a map's members, not an array element, so this cannot be a `known-key` rule at a path",
+    "where": [
+     "entries/YYYY-MM-DD-slug.md",
+     "costs.md"
+    ]
+   },
+   {
+    "kind": "named",
+    "id": "gallery-item-known-keys",
+    "because": "each item of a gallery: array needs its own known-key check against src/type/width/height/caption/poster/from, for the same reason cost-line-known-keys is named rather than expressed",
+    "where": [
+     "entries/YYYY-MM-DD-slug.md"
+    ]
+   },
+   {
+    "kind": "named",
+    "id": "entry-date-is-a-real-calendar-date",
+    "because": "the pattern above only checks the YYYY-MM-DD shape; a real calendar check (no 2026-13-40) needs the same Date-arithmetic lib/validate/entry.ts's isRealCalendarDate does, which this vocabulary's pattern kind cannot express and should not re-derive (leap years) — B616. Not needed for trip.md's start/end: lib/tripWrite.ts's DATE_RE is exactly as shallow as this document's pattern, on purpose.",
+    "where": [
+     "entries/YYYY-MM-DD-slug.md"
+    ]
+   },
+   {
+    "kind": "named",
+    "id": "budget-total-and-days-are-positive",
+    "because": "validateCostsPut in lib/validate/costs.ts refuses a non-positive budget.total or budget.days; no assert kind in this vocabulary expresses a numeric range, only type/enum/pattern/shape — B616",
+    "where": [
+     "costs.md"
+    ]
+   }
+  ]
+ }
+}

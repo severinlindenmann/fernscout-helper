@@ -38,8 +38,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { ROOT } from "./lib.mjs";
-import { openapi } from "./api.mjs";
-import { apiOnlyDrift } from "./model.mjs";
+import { openapi, contentModel } from "./api.mjs";
+import { apiOnlyDrift, readSnapshot, snapshotDrift } from "./contentModel.mjs";
 
 const FIXTURES = join(ROOT, ".claude/skills/shared/fixtures");
 
@@ -102,26 +102,56 @@ for (const fixture of EXPECTED) {
   if (!ok) failed += 1;
 }
 
-// The blind spot the three fixtures above cannot reach at all: `apiOnly`
-// keys never appear in a file, so `checkKeys()` skips them and no fixture,
-// however carefully planted, can exercise one (B585). This is the guard for
-// exactly that gap — it does not validate a journal, it validates
-// `model.mjs` itself, by comparing every `apiOnly` key that declares a
-// `type` against the instance's own published schema for that field.
+// The blind spot no fixture can reach at all: `apiOnly` keys never appear in
+// a file, so `checkKeys()` skips them (B585), and — since B610 — the
+// manifest itself says nothing about their type either (a `never-in-file`
+// rule only ever carries `because`, confirmed against a live document). This
+// is the guard for exactly that gap — it does not validate a journal, it
+// checks `contentModel.mjs`'s own `API_ONLY_TYPES` table, the one piece of
+// B585's fix a published document has no vocabulary for, against the
+// instance's live request schema.
 let apiOnlyFailed = 0;
 try {
   const { doc, from, site } = await openapi({});
   const drift = apiOnlyDrift(doc);
   if (drift.length) {
     apiOnlyFailed = drift.length;
-    console.log(`\n✗ apiOnly drift — model.mjs disagrees with ${site} (schema from ${from}) about ${drift.length} key${drift.length === 1 ? "" : "s"}:`);
+    console.log(`\n✗ apiOnly drift — this repository's assumptions disagree with ${site} (schema from ${from}) about ${drift.length} key${drift.length === 1 ? "" : "s"}:`);
     for (const d of drift) console.log(`    ${d.file} ${d.key}: ${d.why}`);
   } else {
-    console.log(`✓ apiOnly keys — model.mjs's declared types agree with ${site} (schema from ${from})`);
+    console.log(`✓ apiOnly keys — this repository's declared types agree with ${site} (schema from ${from})`);
   }
 } catch (failure) {
   apiOnlyFailed = 1;
   console.log(`✗ apiOnly drift check could not run: ${failure.message}`);
+}
+
+// The whole reason a committed snapshot is acceptable at all (B610, in place
+// of the `model.mjs` copy that rotted more than once): it is compared to the
+// live document on every run, and a run where they disagree fails, loudly,
+// naming the disagreement, rather than the snapshot quietly drifting the way
+// the hand-kept copy did. This only runs online — there is nothing to
+// compare a snapshot against without the live document to compare it to.
+let snapshotFailed = 0;
+try {
+  const { doc, from, site } = await contentModel({});
+  if (!doc) {
+    console.log(`✗ snapshot check could not run — ${site ?? "the instance"} publishes no content-model.json to compare against`);
+    snapshotFailed = 1;
+  } else {
+    const snapshot = readSnapshot();
+    const drift = snapshotDrift(doc, snapshot);
+    if (drift.length) {
+      snapshotFailed = drift.length;
+      console.log(`\n✗ snapshot drift — content-model.snapshot.json disagrees with the live document (from ${from}):`);
+      for (const d of drift) console.log(`    ${d}`);
+    } else {
+      console.log(`✓ snapshot agrees with the live document (from ${from}, taken ${snapshot.snapshotTakenAt})`);
+    }
+  }
+} catch (failure) {
+  snapshotFailed = 1;
+  console.log(`✗ snapshot check could not run: ${failure.message}`);
 }
 
 if (missing > 0) {
@@ -135,14 +165,22 @@ if (failed > 0) {
     `\n${failed} fixture${failed === 1 ? "" : "s"} did not say what it should.\n` +
     "Usually this means the instance has learned a field these tools have not.\n" +
     "Read the report — `node .claude/skills/validate-content/validate.mjs --user <name>` —\n" +
-    "and if it calls a real field unknown, the fix is in shared/model.mjs.",
+    "and if it calls a real field unknown, the fix is in the fernscout repo's content-model.json —\n" +
+    "this repository only reads it.",
   );
 }
 if (apiOnlyFailed > 0) {
   console.log(
-    "\nmodel.mjs's declared type for an apiOnly key does not match what the instance now publishes.\n" +
+    "\nAn apiOnly key's declared type does not match what the instance now publishes.\n" +
     "That key never appears in a file, so no fixture could have caught this — see B585.\n" +
-    "Fix the note and the type in shared/model.mjs to say what the schema now says.",
+    "The fix is in the fernscout repo's content-model.json.",
   );
 }
-process.exit(failed > 0 || missing > 0 || apiOnlyFailed > 0 ? 1 : 0);
+if (snapshotFailed > 0) {
+  console.log(
+    "\ncontent-model.snapshot.json is out of date. Refresh it with:\n" +
+    "  node .claude/skills/shared/snapshot.mjs\n" +
+    "and commit the result — never hand-edit the JSON.",
+  );
+}
+process.exit(failed > 0 || missing > 0 || apiOnlyFailed > 0 || snapshotFailed > 0 ? 1 : 0);

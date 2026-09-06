@@ -79,13 +79,15 @@ there is any doubt about whether they meant the website or just the file.
 ```
 .claude/skills/<name>/       one skill: SKILL.md and its scripts, together
 .claude/skills/shared/       lib.mjs (arguments, CSV) · costfile.mjs (costs: blocks)
-                             frontmatter.mjs (reading YAML) · model.mjs (every option
-                             there is, the fallback) · contentModel.mjs (reads the same
-                             options off <site>/content-model.json instead, when there
-                             is one) · pattern.mjs (a `pattern` rule, matched without
-                             ever handing an untrusted regex to RegExp) · journal.mjs
-                             (a folder, parsed) · api.mjs · selftest.mjs (do these tools
-                             still agree with the site?)
+                             frontmatter.mjs (reading YAML) · contentModel.mjs (the file
+                             shape — reads it off <site>/content-model.json, falling back
+                             to the committed content-model.snapshot.json only when the
+                             instance cannot be reached) · snapshot.mjs (refreshes that
+                             snapshot from a real instance; never hand-edit the JSON) ·
+                             pattern.mjs (a `pattern` rule, matched without ever handing
+                             an untrusted regex to RegExp) · journal.mjs (a folder,
+                             parsed) · api.mjs · selftest.mjs (do these tools still agree
+                             with the site?)
 .claude/skills/shared/fixtures/  the three test journals selftest.mjs runs —
                              committed, unlike content/, because a fixture nobody
                              can clone is not a test
@@ -102,15 +104,32 @@ should not have to run `npm install` before their photographs work.
 
 **These tools follow an instance rather than defining anything**, and that is
 the whole design: types, enums, required lists and the upload limits all come
-from `<site>/openapi.json` and `<site>/api/health` at run time. What they do
-keep is the shape of the *files* — which keys a `trip.md` may carry, which of
-them never travel — because a contract about HTTP cannot describe that.
+from `<site>/openapi.json` and `<site>/api/health` at run time, and the shape
+of the *files* — which keys a `trip.md` may carry, which of them never travel
+— comes from `<site>/content-model.json`, published for exactly the reason a
+contract about HTTP cannot describe that on its own. What these tools keep
+for themselves, permanently, is only the half no server can answer because it
+cannot see the disk: every `gallery:` `src` existing, a `media/<slug>/`
+folder belonging to no day, a filename's date against the frontmatter's, two
+files sharing a slug, a date inside the trip with no day at all.
 
-That last part can fall behind, and did once. The site gained a third answer
-for a day whose costs nobody recorded (`unrecorded: [costs]`, beside
-`without: [costs]`), and these tools did not know the key: a perfectly good
+That last part — the file shape — used to be a hand-kept copy here
+(`model.mjs`), and it fell behind more than once: the site gained a third
+answer for a day whose costs nobody recorded (`unrecorded: [costs]`, beside
+`without: [costs]`), and these tools did not know the key. A perfectly good
 journal came back with two errors, both wrong. The validator was working
-correctly and had simply not been told.
+correctly and had simply not been told — which is the whole reason the copy
+is gone and the shape is fetched now too.
+
+Fetching it does mean a clone with no network cannot check anything the
+first time. `content-model.snapshot.json`, committed beside `contentModel.mjs`
+and refreshed with `node .claude/skills/shared/snapshot.mjs`, is the answer:
+generated from a real instance, never hand-edited, and only ever reached for
+when the live document cannot be — every run that falls back to it says so,
+plainly, naming which snapshot and when it was taken. `selftest.mjs` fails
+the moment it disagrees with the live document, which is what makes a
+committed copy acceptable here when it was not acceptable as `model.mjs`:
+nothing compared that one to anything.
 
 ```bash
 node .claude/skills/shared/selftest.mjs
@@ -124,8 +143,10 @@ it is where somebody's own photographs go — and a fixture that only exists on
 the machine that wrote it is not a regression test. **Run it after the site is
 deployed with anything new**, and when a validation message looks wrong.
 
-If it reports a real field as unknown, the fix is in `shared/model.mjs`. If it
-stops noticing a planted fault, the fix is in `validate-content/validate.mjs`.
+If it reports a real field as unknown, the fix is in the fernscout repo's
+content-model.json — this repository only reads it, and `snapshot.mjs`
+refreshes the committed fallback to match. If it stops noticing a planted
+fault, the fix is in `validate-content/validate.mjs`.
 
 ## Adding a skill
 

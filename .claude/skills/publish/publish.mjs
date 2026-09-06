@@ -465,8 +465,8 @@ for (const trip of journal.trips) {
       if (entry.data[key] !== undefined && entry.data[key] !== null) body[key] = entry.data[key];
     }
     // `weather` never lives in the file — it is an instruction to the
-    // server, not content, which is exactly what `apiOnly` means in
-    // shared/model.mjs — so it is not in the key list above. `--weather`
+    // server, not content, which is exactly what `never-in-file` means in
+    // <site>/content-model.json — so it is not in the key list above. `--weather`
     // supplies it here instead, and only for a day the archive can actually
     // answer: no lat/lng, no request, never a guess standing in for one.
     if (sendWeather && body.lat !== undefined && body.lng !== undefined) body.weather = true;
