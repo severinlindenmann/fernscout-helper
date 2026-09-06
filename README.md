@@ -56,6 +56,8 @@ Every tool here does one of three things.
 | `icloud-export` | "help me export photos from iCloud on my Mac" | macOS |
 | `revolut-costs` | "import my Revolut statement" | anywhere |
 | `trip-budget` | "what did the trip cost", "add the flights" | anywhere |
+| `validate-content` | "check my journal", "did I forget anything" | anywhere |
+| `publish` | "publish", "put it online" | a journal on an instance |
 
 **A skill is one folder.** `.claude/skills/<name>/` holds a `SKILL.md` you can
 read start to finish and the scripts it runs, so nothing is hidden and nothing

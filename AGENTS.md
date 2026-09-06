@@ -18,6 +18,8 @@ running it.
 | "help me export photos from iCloud on my Mac" | `icloud-export` |
 | "import my Revolut statement" | `revolut-costs` |
 | "add the budget", "what did the trip cost", "I paid for the flights" | `trip-budget` |
+| "check my journal", "is this right", "did I forget anything", "what else can I set" | `validate-content` |
+| "publish", "put it online", "upload my journal", "sync the trip" | `publish` |
 
 **Read the skill's `SKILL.md` before running anything.** It carries the order of
 the commands, the questions to ask, and — this matters more than it sounds —
@@ -42,6 +44,12 @@ Everything you write carries `status: draft`. **Publishing is never yours to
 decide** — a person removes that line, or asks you to. "It looks finished" is not
 consent, and neither is silence.
 
+The `publish` skill does not soften that. It moves the decision to one place —
+the person saying the word, once, for a whole run — instead of asking about
+fourteen days one at a time. Run it because they asked, in this conversation,
+in words; show them the `--dry-run` plan first; and offer `--drafts` whenever
+there is any doubt about whether they meant the website or just the file.
+
 ## Four things that are easy to get wrong
 
 - **Photographs are the most private thing here.** Every picture written into
@@ -62,6 +70,8 @@ consent, and neither is silence.
 ```
 .claude/skills/<name>/       one skill: SKILL.md and its scripts, together
 .claude/skills/shared/       lib.mjs (arguments, CSV) · costfile.mjs (costs: blocks)
+                             frontmatter.mjs (reading YAML) · model.mjs (every option
+                             there is) · journal.mjs (a folder, parsed) · api.mjs
 import/<source>/             gitignored — statements and exports, exactly as they arrived
 export/<trip>/               gitignored — working files: photos, review.json, notes.md, costs.json
 content/<user>/trips/<trip>/ gitignored — the journal itself
