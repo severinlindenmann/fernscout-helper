@@ -479,7 +479,32 @@ for (const trip of journal.trips) {
     //
     // Sending the wrong one writes a false statement into somebody's journal,
     // so they are mapped separately rather than folded together. B560.
-    for (const track of entry.data.without ?? []) body[track] = false;
+    //
+    // B597: `without: false` is not the same promise for every field.
+    // openapi.json's `Draft` schema says so in words for two of them —
+    // `photos` ("`false`, and only on create — this day has no photographs")
+    // and `coordinates` ("`false`, and only on create — this day has no one
+    // place to put on a map") — and `DayEdit`'s editable-field list leaves
+    // both out entirely, so PATCH refuses either with 400 unsupported_field.
+    // `costs` carries no such restriction: its `false` is on both schemas,
+    // because a day whose costs were recorded and later found to be none has
+    // to be able to say so after the fact — so it still goes straight onto
+    // `body` and is sent whichever call this turns out to be.
+    //
+    // The guard below is on the *field*, not on the answer or on `without` as
+    // a whole: only `photos` and `coordinates` are held back, into their own
+    // bucket, added to the body only where the day is being created.
+    // `unrecorded: → "unknown"` is not documented as create-only at all —
+    // PATCH refuses it for these same two fields only because the route's
+    // editable list omits them altogether, which is B599, a separate ticket.
+    // This set should narrow to nothing once B599 lands and the route
+    // accepts `photos`/`coordinates` on an update.
+    const CREATE_ONLY_FALSE = new Set(["photos", "coordinates"]);
+    const createOnlyFalse = {};
+    for (const track of entry.data.without ?? []) {
+      if (CREATE_ONLY_FALSE.has(track)) createOnlyFalse[track] = false;
+      else body[track] = false;
+    }
     for (const track of entry.data.unrecorded ?? []) body[track] = "unknown";
 
     const recorded = typeof entry.data.slug === "string" ? entry.data.slug : null;
@@ -514,7 +539,7 @@ for (const trip of journal.trips) {
       if (dry) slug = entry.slug;
       else {
         const made = await call("POST", `/api/v1/${user}/trips/${trip.id}/days`, {
-          body: { ...body, idempotency_key: `${trip.id}:${entry.slug}` },
+          body: { ...body, ...createOnlyFalse, idempotency_key: `${trip.id}:${entry.slug}` },
         });
         if (made.ok) {
           slug = made.body.slug;
@@ -571,6 +596,27 @@ for (const trip of journal.trips) {
     // of them — every gallery item counted as pending because nobody had
     // asked. `--offline` keeps the old no-network behaviour, and says so.
     const there = offline ? { ok: false } : await call("GET", `/api/v1/${user}/trips/${trip.id}/days/${slug}`);
+
+    // B597: a `photos`/`coordinates` `false` held back from an update (above)
+    // is not silently re-sendable, so a file edited to add `without: [photos]`
+    // after the day was first created — one that never got `photos: false` at
+    // the time — cannot be corrected by this run. That is not nothing: say it,
+    // the same way B572 flags a trip field with no door of its own, rather
+    // than let the instance quietly keep disagreeing with the file.
+    if (there.ok) {
+      const remoteWithout = new Set(there.body?.without ?? []);
+      const remoteUnrecorded = new Set(there.body?.unrecorded ?? []);
+      const disagreeing = [...CREATE_ONLY_FALSE]
+        .filter((track) => (entry.data.without ?? []).includes(track))
+        .filter((track) => !remoteWithout.has(track) && !remoteUnrecorded.has(track));
+      if (disagreeing.length) {
+        console.log(
+          `  ⚠ ${slug}: this file's without: names ${disagreeing.join(", ")}, but the instance was ` +
+          `not told that at creation and there is no call left that can set ${disagreeing.length === 1 ? "it" : "them"} now ` +
+          "(false is create-only for these fields, per openapi.json). Fix it on the instance by hand for now.",
+        );
+      }
+    }
     const gallery = (there.ok ? (there.body?.entry?.gallery ?? there.body?.gallery) : null) ?? [];
     const already_uploaded = new Set(gallery.map((item) => basename(String(item.src ?? ""))));
     const pending = (entry.data.gallery ?? [])
