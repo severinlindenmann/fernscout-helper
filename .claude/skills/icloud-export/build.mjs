@@ -42,6 +42,31 @@ const notes = [`# ${trip} — what the author said`, "",
   "from nothing else: no weather nobody mentioned, no meals nobody ate.", ""];
 let written = 0, copied = 0;
 
+
+// EXIF Orientation, turned into real pixels. The eight values are the standard
+// ones; sips rotates clockwise, and a flip has to come before the rotation.
+const ORIENTATION = {
+  2: { flip: "horizontal" },
+  3: { rotate: 180 },
+  4: { flip: "vertical" },
+  5: { flip: "horizontal", rotate: 270 },
+  6: { rotate: 90 },
+  7: { flip: "horizontal", rotate: 90 },
+  8: { rotate: 270 },
+};
+
+function bakeOrientation(file) {
+  let value;
+  try {
+    value = Number(execFileSync("exiftool", ["-Orientation", "-n", "-s3", file],
+                                { encoding: "utf8" }).trim());
+  } catch { return; }                      // no exiftool reading, no turn to make
+  const turn = ORIENTATION[value];
+  if (!turn) return;                       // 1, or nothing written at all
+  if (turn.flip) execFileSync("sips", ["-f", turn.flip, file], { stdio: "ignore" });
+  if (turn.rotate) execFileSync("sips", ["-r", String(turn.rotate), file], { stdio: "ignore" });
+}
+
 for (const [day, list] of Object.entries(byDay).sort()) {
   const places = list.map((p) => (p.place || "").split(",")[0]).filter(Boolean);
   const place = places.sort((a, b) =>
@@ -55,6 +80,11 @@ for (const [day, list] of Object.entries(byDay).sort()) {
     const dest = join(mediaDir, name);
     copyFileSync(join(photosDir, p.file), dest);
     execFileSync("sips", ["-Z", String(MAX_EDGE), dest], { stdio: "ignore" });
+    // A phone that was held sideways writes upright pixels plus an Orientation
+    // tag saying how to turn them. Stripping the tag below would leave the
+    // picture lying on its side for good, so the turn is baked into the pixels
+    // first — a photograph nobody can read is not a photograph.
+    bakeOrientation(dest);
     // Served pictures carry no metadata: a phone writes the coordinates of
     // somebody's front door into the file. They live in the frontmatter instead,
     // where they can be seen and deleted.
