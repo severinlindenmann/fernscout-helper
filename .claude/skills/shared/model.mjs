@@ -145,17 +145,39 @@ export const MODEL = {
       // exactly like the other four (a file never carries `weather:`, and
       // `publish.mjs` never reads one from frontmatter), but unlike them it is
       // a genuine offer to the owner rather than plumbing: `coordinates` and
-      // `photos` are only ever `false`, and `idempotency_key` names a retry.
+      // `photos` decline a day (`false`, create only) or say a real one
+      // exists and nobody has it yet (`"unknown"`) — never something an agent
+      // should be inviting somebody to set, only something that already
+      // happened being recorded — and `idempotency_key` names a retry.
       // `weather: true` asks the server to retrieve a real measurement for a
       // real day, which is exactly the kind of absent-and-actionable option
       // this file's tips exist to surface. `weatherData` stays plain
       // `apiOnly` — an agent must never write one from its own knowledge, so
       // there is nothing here to invite anybody to set.
-      weather: { apiOnly: true, offerable: true, note: "ask the server to look up what the weather was" },
-      weatherData: { apiOnly: true, note: "a reading somebody actually took" },
-      coordinates: { apiOnly: true, note: "only ever false — this day has no one place" },
-      photos: { apiOnly: true, note: "only ever false — this day has no photographs" },
-      idempotency_key: { apiOnly: true, note: "names one write, so a retry is safe" },
+      // `type` is written here for these five even though they are `apiOnly`
+      // — `checkKeys()` skips `apiOnly` keys entirely (B585), so it is never
+      // read by anything that validates a file. It is read by
+      // `apiOnlyDrift()` below, the one check that CAN see these keys: it
+      // compares this shape against the instance's own published schema and
+      // names a disagreement, which is exactly the guard B585 found missing
+      // the day `coordinates` and `photos` drifted here and nothing noticed.
+      weather: { apiOnly: true, offerable: true, type: "boolean", note: "ask the server to look up what the weather was" },
+      weatherData: { apiOnly: true, type: "object", note: "a reading somebody actually took" },
+      coordinates: {
+        apiOnly: true,
+        type: ["boolean", "string"],
+        note:
+          "false, and only on create — this day has no one place. \"unknown\" is the third answer — it " +
+          "happened somewhere and nobody can say where — written into the day as unrecorded: [coordinates]",
+      },
+      photos: {
+        apiOnly: true,
+        type: ["boolean", "string"],
+        note:
+          "false, and only on create — this day has no photographs. \"unknown\" is the third answer — there " +
+          "are pictures somewhere and nobody has them to hand — written into the day as unrecorded: [photos]",
+      },
+      idempotency_key: { apiOnly: true, type: "string", note: "names one write, so a retry is safe" },
       gallery: { type: "array", fileOnly: true, note: "the photographs. Not part of the day's body over the API — POST them to …/media" },
       cover: { type: "string", fileOnly: true },
       status: { type: "string", enum: ["draft"], fileOnly: true, note: "publishing is a separate call, never a field" },
@@ -258,5 +280,56 @@ export function crosscheck(openapi) {
   const created = deref(body("/api/v1/journals", "post"))?.properties ?? {};
   const patched = deref(body("/api/v1/{user}/config", "patch"))?.properties ?? {};
   compare("config.json", { properties: { ...created, ...patched } }, "the journal's own fields");
+  return out;
+}
+
+/**
+ * The blind spot `crosscheck()` cannot see: `checkKeys()` skips every
+ * `apiOnly` key (`validate.mjs`'s `if (local.apiOnly) continue`), on purpose
+ * — these keys never appear in a file, so there is nothing on disk to check
+ * them against. That also means no fixture can ever exercise one, and B585
+ * is what happened in that blind spot: `coordinates` and `photos` gained a
+ * third answer over the API (`"unknown"`, beside `false`) and the note here
+ * kept saying "only ever false" for months before anybody noticed by hand.
+ *
+ * This walks every `apiOnly` key that bothers to declare a `type` — most do
+ * not, because prose is all an instruction like `idempotency_key` needs —
+ * and compares it against the instance's own request schema for the file
+ * that key belongs to. It cannot check prose (`note`) at all: nothing here
+ * parses English. But `type` is data, and "boolean" beside `["boolean",
+ * "string"]` is a disagreement in kind, not in wording — exactly what B585
+ * asks this function to catch.
+ */
+export function apiOnlyDrift(openapi) {
+  const out = [];
+  const body = (path, verb) =>
+    openapi?.paths?.[path]?.[verb]?.requestBody?.content?.["application/json"]?.schema;
+  const deref = (schema) => {
+    const name = schema?.$ref?.split("/").pop();
+    return name ? openapi.components?.schemas?.[name] : schema;
+  };
+  const created = deref(body("/api/v1/journals", "post"))?.properties ?? {};
+  const patched = deref(body("/api/v1/{user}/config", "patch"))?.properties ?? {};
+  const SCHEMA_FOR = {
+    "trip.md": deref(body("/api/v1/{user}/trips", "post")),
+    "entries/YYYY-MM-DD-slug.md": deref(body("/api/v1/{user}/trips/{trip}/days", "post")),
+    "config.json": { properties: { ...created, ...patched } },
+  };
+  for (const [file, spec] of Object.entries(MODEL)) {
+    const schema = SCHEMA_FOR[file];
+    if (!schema) continue;
+    for (const [key, local] of Object.entries(spec.keys)) {
+      if (!local.apiOnly || local.type === undefined) continue;
+      const published = schema.properties?.[key];
+      // No key there at all is `crosscheck()`'s finding, not this one's — it
+      // already reports an `apiOnly` key the instance has dropped entirely.
+      if (!published || published.type === undefined) continue;
+      const here = [local.type].flat().slice().sort().join("|");
+      const there = [published.type].flat().slice().sort().join("|");
+      if (here !== there) {
+        out.push({ file, key, why: `model.mjs says ${here}, the instance's schema says ${there}` });
+      }
+    }
+  }
   return out;
 }
