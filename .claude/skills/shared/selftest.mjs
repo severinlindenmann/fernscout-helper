@@ -49,7 +49,13 @@ const FIXTURES = join(ROOT, ".claude/skills/shared/fixtures");
 const EXPECTED = [
   { user: "perfekt", errors: 0, what: "every option set, and nothing wrong" },
   { user: "halbfertig", errors: 0, what: "valid and incomplete — incomplete is not wrong" },
-  { user: "luecken", atLeast: 24, what: "one planted fault of each kind" },
+  // B644: 24 -> 26. Two more planted faults were added so this fixture
+  // actually exercises the two named checks the document just gained —
+  // `entries/2026-13-40-badcalendar.md` (a date that matches the YYYY-MM-DD
+  // shape but is not a real calendar date) and `costs.md`'s `budget.days: -3`
+  // (present, but not positive) — rather than leaving them declared and
+  // implemented with nothing in any fixture ever tripping them.
+  { user: "luecken", atLeast: 26, what: "one planted fault of each kind" },
 ];
 
 const validate = join(ROOT, ".claude/skills/validate-content/validate.mjs");

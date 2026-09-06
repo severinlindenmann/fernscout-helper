@@ -248,9 +248,23 @@ const SERVER_ONLY_FEATURES = ["logging", "credits"];
  * true }` believing it does something has been misled, not refused. That is
  * "accepted and probably not what anybody meant" — this file's own
  * definition of `warn` — rather than "the instance will refuse this".
+ *
+ * The shape check itself — `{ "postcards": true }` is refused, only `{
+ * "enabled": true }` is taken — is B644's `assert: "shape"`/`members` rule
+ * (`config.json`'s `features.*`, `MODEL["config.json"].shapes.features`) when
+ * the file shape came from the manifest, so a config.json is caught by the
+ * document's own rule rather than by an opinion kept only here. `model.mjs`
+ * carries no `shapes` at all — there is nothing in its hand-kept format for a
+ * wildcard member's shape to live in — so the one member this vocabulary has
+ * published so far (`{ enabled: boolean }`) is also the fallback when there
+ * is no manifest to read: the same constraint, stated once here for the one
+ * case `model.mjs` cannot express and never has to drift from the manifest
+ * because there is only ever one shape rule to fall back to.
  */
 function checkFeatures(where, features) {
   if (typeOf(features) !== "object") return;
+  const shape = MODEL["config.json"]?.shapes?.features;
+  const members = shape?.members ?? { enabled: "boolean" };
   for (const [name, value] of Object.entries(features)) {
     if (CAPABILITY_NAMES.length && !CAPABILITY_NAMES.includes(name)) {
       const near = suggest(name, CAPABILITY_NAMES);
@@ -262,8 +276,14 @@ function checkFeatures(where, features) {
       error(where, `features.${name} is ${typeOf(value)}`, `must be an object like { "enabled": ${JSON.stringify(value)} }`);
       continue;
     }
-    if (typeof value.enabled !== "boolean") {
-      error(where, `features.${name}.enabled is ${JSON.stringify(value.enabled)}`, "must be true or false");
+    // Each declared member is a NESTED field of this feature's own value
+    // (`value.enabled`), checked against the type `members` names it — never
+    // the feature's whole value compared against `members` keyed by member
+    // name, which is the bug B616 fixed in the server's own interpreter.
+    for (const [member, type] of Object.entries(members)) {
+      if (typeOf(value[member]) !== type) {
+        error(where, `features.${name}.${member} is ${JSON.stringify(value[member])}`, `must be ${type === "boolean" ? "true or false" : `a ${type}`}`);
+      }
     }
     if (SERVER_ONLY_FEATURES.includes(name)) {
       warn(where, `features.${name} is the operator's to set, not the journal's`,
@@ -280,6 +300,24 @@ function checkCosts(where, list) {
     if (typeOf(line) !== "object") { error(at, `is ${typeOf(line)}`, "a { label, amount } line"); return; }
     checkKeys(at, Object.fromEntries(COST_KEYS.map((k) => [k, {}])), line, { tips: false, scope: "cost" });
   });
+}
+
+/**
+ * The document's `entry-date-is-a-real-calendar-date` named check (B644),
+ * matching `isRealCalendarDate()` in the server's own `lib/validate/entry.ts`
+ * exactly — the same Date-arithmetic, not a re-derivation of it: a `pattern`
+ * rule can only check the YYYY-MM-DD shape (`\d{4}-\d{2}-\d{2}`), which
+ * `2026-13-40` also matches, and `Date.parse`/`new Date(string)` silently
+ * roll an out-of-range day or month into the next one rather than reject it
+ * (`new Date("2026-02-30")` is the 2nd of March) — so the only honest check
+ * is building the date back up with `Date.UTC` and asking whether what comes
+ * out is what went in.
+ */
+function isRealCalendarDate(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
 }
 
 function daysBetween(start, end) {
@@ -333,6 +371,17 @@ function checkJournal(user, only) {
         for (const key of ["total", "days", "currency"]) {
           if (budget[key] === undefined) error(costsWhere, `budget.${key} is missing`, "a budget needs all three");
         }
+        // B644 — `budget-total-and-days-are-positive`, matching
+        // `validateCostsPut` in the server's own `lib/validate/costs.ts`:
+        // both refuse a `total`/`days` that is not a positive, finite
+        // number — zero or negative is refused rather than written and read
+        // back as no budget at all.
+        for (const key of ["total", "days"]) {
+          if (budget[key] === undefined) continue;
+          if (typeof budget[key] !== "number" || !Number.isFinite(budget[key]) || budget[key] <= 0) {
+            error(costsWhere, `budget.${key} is ${JSON.stringify(budget[key])}`, "a positive number");
+          }
+        }
       }
     }
     if (!trip.plan) {
@@ -385,6 +434,13 @@ function checkJournal(user, only) {
 
       const date = entry.data.date ?? entry.fileDate;
       if (date) {
+        // B644 — `entry-date-is-a-real-calendar-date`. The filename and the
+        // `pattern` rule on `date` both only check the YYYY-MM-DD shape;
+        // `2026-13-40` (or a real filename typo like it) passes both and is
+        // exactly what this catches.
+        if (!isRealCalendarDate(date)) {
+          error(entryWhere, `date ${date} is not a real calendar date`, "expected a real calendar date, as YYYY-MM-DD");
+        }
         covered.add(date);
         if (data.start && data.end && (date < data.start || date > data.end)) {
           error(entryWhere, `date ${date} is outside the trip (${data.start} … ${data.end})`, "widen the trip, or move the day");
