@@ -28,6 +28,7 @@ the plan it prints on a second run is shorter than the first, not empty.
 --code <six digits>   the code that address was mailed
 --trip <id>           just one trip
 --dry-run             print every call it would make, send none
+--offline             with --dry-run: skip even the reads, print an unconfirmed plan
 --drafts              write and upload, but do not put anything on the site
 --skip-validate       start even though validate-content reports errors
 ```
@@ -42,9 +43,19 @@ node publish.mjs --user severin --dry-run
 ```
 
 It prints the whole plan — every trip, every day, every batch of photographs —
-and sends nothing. Read that back to the person before the real run. It is the
-one cheap moment to notice that a trip is about to be created twice under two
-ids, or that fourteen days are about to go up when they meant one.
+and sends nothing. It does still *ask* the site what each day already holds
+(reads only, nothing is sent), because that is the only way the photograph
+count it prints is the count a real run would then send — a day that already
+has 60 of its 75 photographs reports 15 pending, not 75. Read the plan back to
+the person before the real run. It is the one cheap moment to notice that a
+trip is about to be created twice under two ids, or that fourteen days are
+about to go up when they meant one.
+
+Add `--offline` to skip those reads too and get a plan with no network at all.
+It is faster, and it is a guess: it cannot see what the site already has, so it
+prints the whole local gallery as pending for every day, and says plainly that
+the numbers are unconfirmed. Reach for it only when there truly is no
+connection — the ordinary dry run is the one worth reading back to a person.
 
 ## Two things it will not do
 

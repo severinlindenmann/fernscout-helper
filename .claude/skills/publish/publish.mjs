@@ -4,6 +4,7 @@
 //   node publish.mjs --user severin                 the whole journal
 //   node publish.mjs --user severin --trip algarve-2026
 //   node publish.mjs --user severin --dry-run       say what it would do
+//   node publish.mjs --user severin --dry-run --offline   … without asking the site
 //   node publish.mjs --user severin --drafts        write the days, do not publish them
 //
 // It asks nothing. Everything it does is decided by comparing what is on disk
@@ -11,6 +12,13 @@
 // day that is not there is written, a day that is there is patched, and
 // photographs that are not on the day yet are sent. Running it twice does the
 // same work as running it once.
+//
+// `--dry-run` still asks the site what each day already holds, because that
+// is the only way its printed counts can be the counts a real run would then
+// send — a plan is not a rehearsal if it guesses at the one number that
+// measures time, bandwidth and money. `--offline` (the same flag
+// `validate-content` uses) skips that asking and says so in what it prints:
+// a no-network plan is allowed to exist, but not to look like it asked.
 //
 // **It refuses to start while `validate.mjs` reports an error.** Publishing
 // content the instance will partly reject leaves a journal half-written, which
@@ -27,10 +35,15 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const user = arg("user");
 const only = arg("trip");
 const dry = has("dry-run");
+const offline = has("offline");
 const draftsOnly = has("drafts");
 
 if (!user) {
   console.error("Which journal? node publish.mjs --user <username>");
+  process.exit(1);
+}
+if (offline && !dry) {
+  console.error("--offline only makes sense with --dry-run: a real run has to ask the site to send anything.");
   process.exit(1);
 }
 
@@ -78,7 +91,11 @@ if (!creating) {
 let LIMITS = {};
 try { LIMITS = (await health()).doc?.media ?? {}; } catch { LIMITS = {}; }
 const journal = readJournal(user);
-console.log(`${SITE} · content/${user}${dry ? " · dry run, nothing is sent" : ""}\n`);
+console.log(
+  `${SITE} · content/${user}` +
+  (dry ? ` · dry run, nothing is sent${offline ? " · offline — the photograph counts below are not checked against the site" : ""}` : "") +
+  "\n",
+);
 
 // ── 2. the journal itself ──────────────────────────────────────────────────
 let status = process.env.FERNSCOUT_TOKEN
@@ -343,7 +360,14 @@ for (const trip of journal.trips) {
     // The instance's own gallery is the record of what has been sent, so a
     // second run uploads nothing rather than duplicating everything. No local
     // state file to go stale.
-    const there = dry ? { ok: false } : await call("GET", `/api/v1/${user}/trips/${trip.id}/days/${slug}`);
+    //
+    // A dry run asks this too, unless told not to: it is the same call the
+    // real run is about to make (the day either already existed, or `slug`
+    // just came back from creating it above), and skipping it is how a dry
+    // run once reported "would send 75 files" for a day that already held 60
+    // of them — every gallery item counted as pending because nobody had
+    // asked. `--offline` keeps the old no-network behaviour, and says so.
+    const there = offline ? { ok: false } : await call("GET", `/api/v1/${user}/trips/${trip.id}/days/${slug}`);
     const gallery = (there.ok ? (there.body?.entry?.gallery ?? there.body?.gallery) : null) ?? [];
     const already_uploaded = new Set(gallery.map((item) => basename(String(item.src ?? ""))));
     const pending = (entry.data.gallery ?? [])
@@ -365,7 +389,8 @@ for (const trip of journal.trips) {
       if (batch.length) batches.push(batch);
 
       note(`  ${step(`send ${pending.length} file${pending.length === 1 ? "" : "s"} for ${slug}`)}` +
-           (batches.length > 1 ? ` in ${batches.length} batches` : ""));
+           (batches.length > 1 ? ` in ${batches.length} batches` : "") +
+           (offline ? " (offline — not checked against the site, so this may be too high)" : ""));
       if (!dry) {
         for (const group of batches) {
           const form = new FormData();
