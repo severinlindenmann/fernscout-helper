@@ -19,8 +19,7 @@
 import { existsSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import { arg, has } from "../shared/lib.mjs";
-import { crosscheck } from "../shared/model.mjs";
-import { resolveModel } from "../shared/contentModel.mjs";
+import { crosscheck, resolveModel } from "../shared/contentModel.mjs";
 import { galleryFile, readJournal, usernames } from "../shared/journal.mjs";
 import { deref, health, openapi, requestSchema } from "../shared/api.mjs";
 
@@ -83,11 +82,11 @@ let DOC = null;
 /**
  * The file shape — which keys a file on disk may carry at all. Resolved once,
  * below, from `<site>/content-model.json` when there is one to read and an
- * instance recent enough to have published it; `shared/model.mjs` otherwise.
- * Everything past this point reads these three exactly as it always has —
- * `checkKeys()` and `checkValue()` do not know or care which source filled
- * them in, which is what makes "identical findings either way" a fact about
- * the data rather than a promise about the code.
+ * instance recent enough to have published it; the committed snapshot
+ * otherwise. Everything past this point reads these three exactly as it
+ * always has — `checkKeys()` and `checkValue()` do not know or care which
+ * source filled them in, which is what makes "identical findings either way"
+ * a fact about the data rather than a promise about the code.
  */
 let MODEL, COST_KEYS, GALLERY_KEYS;
 
@@ -252,14 +251,12 @@ const SERVER_ONLY_FEATURES = ["logging", "credits"];
  * The shape check itself — `{ "postcards": true }` is refused, only `{
  * "enabled": true }` is taken — is B644's `assert: "shape"`/`members` rule
  * (`config.json`'s `features.*`, `MODEL["config.json"].shapes.features`) when
- * the file shape came from the manifest, so a config.json is caught by the
- * document's own rule rather than by an opinion kept only here. `model.mjs`
- * carries no `shapes` at all — there is nothing in its hand-kept format for a
- * wildcard member's shape to live in — so the one member this vocabulary has
- * published so far (`{ enabled: boolean }`) is also the fallback when there
- * is no manifest to read: the same constraint, stated once here for the one
- * case `model.mjs` cannot express and never has to drift from the manifest
- * because there is only ever one shape rule to fall back to.
+ * the file shape came from the live document or the snapshot, so a
+ * config.json is caught by the document's own rule rather than by an opinion
+ * kept only here. `{ enabled: "boolean" }` below is only what runs if BOTH
+ * were somehow unusable and `resolveModel()` fell back to its last-resort
+ * empty MODEL — a case that should not happen, since a snapshot is always
+ * committed, but one this file must not crash on if it ever does.
  */
 function checkFeatures(where, features) {
   if (typeOf(features) !== "object") return;
@@ -360,7 +357,15 @@ function checkJournal(user, only) {
     if (!trip.trip.body) tip(tripWhere, "has no intro prose", "the paragraphs under the frontmatter open the trip");
     if (data.visibility === undefined) tip(tripWhere, "visibility is not set", "absent reads as private — nobody but you and the people on it");
 
-    if (!trip.costs) tip(`content/${user}/trips/${trip.id}/`, "has no costs.md", MODEL["costs.md"].tip);
+    // These two are prose about a whole absent OPTIONAL file, not a rule
+    // about a key inside one — nothing the document's closed vocabulary
+    // publishes (it says `costs.md`/`plan.md` are `optional`, not what to
+    // tell somebody who has neither), so they stay written here, the same as
+    // every other disk-only judgement this client makes for itself.
+    if (!trip.costs) {
+      tip(`content/${user}/trips/${trip.id}/`, "has no costs.md",
+        "a trip with a budget shows how the spending is tracking against it");
+    }
     else {
       const costsWhere = `content/${user}/trips/${trip.id}/costs.md`;
       for (const p of trip.costs.problems) error(costsWhere, `line ${p.line}: ${p.why}`, p.text);
@@ -386,7 +391,8 @@ function checkJournal(user, only) {
     }
     if (!trip.plan) {
       if (data.status === "upcoming") {
-        tip(`content/${user}/trips/${trip.id}/`, "has no plan.md", MODEL["plan.md"].tip);
+        tip(`content/${user}/trips/${trip.id}/`, "has no plan.md",
+          "an upcoming trip with no plan.md shows no route on its map");
       }
     } else {
       const planWhere = `content/${user}/trips/${trip.id}/plan.md`;
@@ -599,6 +605,25 @@ let WEATHER_CAPABLE = false;
 // list of its own to check against.
 let CAPABILITY_NAMES = [];
 
+// The file shape, from the live document when there is one to read, the
+// committed snapshot otherwise. `resolveModel()` never throws — an instance
+// with no content-model.json yet is the ordinary case B609 exists to keep
+// working through, not a failure to report as one. Resolved before the
+// `openapi()` block below because `crosscheck()` needs MODEL to know which
+// keys this file shape already offers.
+{
+  const resolved = await resolveModel({ offline: has("offline"), refresh: has("refresh") });
+  MODEL = resolved.MODEL;
+  COST_KEYS = resolved.COST_KEYS;
+  GALLERY_KEYS = resolved.GALLERY_KEYS;
+  if (!has("json")) console.log(`File shape from ${resolved.source}\n`);
+  // Each of these is a named edge case W41 asks never to fail quietly: an
+  // `assert` kind this client does not know, a `named` check it has not
+  // implemented, a rejected `pattern`, or a manifest whose rules folded into
+  // nothing usable for a file that should have them.
+  for (const notice of resolved.notices) warn("(content-model)", notice.message);
+}
+
 try {
   const { doc, from, site } = await openapi({ offline: has("offline"), refresh: has("refresh") });
 
@@ -646,7 +671,7 @@ try {
   }
 
   if (!has("json")) console.log(`Checked against ${site} — schema from ${from}\n`);
-  for (const drift of crosscheck(doc)) {
+  for (const drift of crosscheck(doc, MODEL)) {
     const unknownHere = drift.why.startsWith("the instance accepts");
     say(unknownHere ? "tip" : "warn", drift.where, `${drift.key}: ${drift.why}`,
       unknownHere
@@ -655,23 +680,6 @@ try {
   }
 } catch (failure) {
   warn("(schema)", failure.message, "checked the file format only; the instance's own rules were not consulted");
-}
-
-// The file shape, from the manifest when there is one to read, `model.mjs`
-// otherwise. `resolveModel()` never throws — an instance with no
-// content-model.json yet is the ordinary case B609 exists to keep working
-// through, not a failure to report as one.
-{
-  const resolved = await resolveModel({ offline: has("offline"), refresh: has("refresh") });
-  MODEL = resolved.MODEL;
-  COST_KEYS = resolved.COST_KEYS;
-  GALLERY_KEYS = resolved.GALLERY_KEYS;
-  if (!has("json")) console.log(`File shape from ${resolved.source}`);
-  // Each of these is a named edge case W41 asks never to fail quietly: an
-  // `assert` kind this client does not know, a `named` check it has not
-  // implemented, a rejected `pattern`, or a manifest whose rules folded into
-  // nothing usable for a file that should have them.
-  for (const notice of resolved.notices) warn("(content-model)", notice.message);
 }
 
 for (const user of users) {

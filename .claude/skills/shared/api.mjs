@@ -124,7 +124,7 @@ export async function health({ offline = false, refresh = false } = {}) {
  * Unlike `openapi()` and `health()`, having none of this is an ordinary,
  * expected outcome rather than a failure to surface: an instance older than
  * B608 simply does not publish it yet, and `contentModel.mjs` falls back to
- * `model.mjs` for exactly that reason. So this never throws. A 404, an
+ * its committed snapshot for exactly that reason. So this never throws. A 404, an
  * unreachable host, a document with no recognisable `contentModel` version,
  * and one that does not even parse as JSON are all reported back as `doc:
  * null` with a `note` saying which — the caller decides what "no manifest"

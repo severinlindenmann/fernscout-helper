@@ -315,8 +315,8 @@ function run(machine, input) {
 /**
  * Compile a manifest's `pattern` into something with a `.test(string)`
  * method, so it drops into `checkValue()` in `validate.mjs` exactly the way
- * a hand-written `RegExp` from `model.mjs` already does — the caller cannot
- * tell the two apart, which is the point: the interpreter's output has to be
+ * an ordinary hand-written `RegExp` already does — the caller cannot tell
+ * the two apart, which is the point: the interpreter's output has to be
  * a value `validate.mjs`'s existing code already knows how to use.
  *
  * Throws `PatternError` for anything outside the supported subset, or not
