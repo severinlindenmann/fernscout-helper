@@ -187,7 +187,6 @@ export const MODEL = {
     what: "the planned route, for a trip that has not happened yet. Optional",
     api: "not over the API today — write the file",
     optional: true,
-    onlyWhen: (trip) => trip?.status === "upcoming",
     tip: "an upcoming trip with no plan.md shows no route on its map",
     keys: {
       route: { type: "array", tip: "the stops, each with a location:" },
