@@ -14,9 +14,13 @@ node .claude/skills/publish/publish.mjs --user <username>
 It compares what is on disk with what the instance already has and makes up
 the difference. A trip that is not there is created; a day that is not there
 is written; a day that is there is updated; photographs the day does not have
-yet are sent; then each day is published. **Running it twice does the same
-work as running it once** — the second run finds everything already there and
-sends nothing.
+yet are sent; then each day is published.
+
+**Running it twice is safe and does not duplicate anything** — no second trip,
+no second day, no photograph uploaded twice. It is not silent, though: a second
+run still sends the settings and the day bodies again, because the folder is
+the source of truth and re-sending is how an edit on disk reaches the site. So
+the plan it prints on a second run is shorter than the first, not empty.
 
 ```
 --user <username>     which journal. Required
