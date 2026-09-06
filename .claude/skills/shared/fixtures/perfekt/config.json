@@ -20,8 +20,6 @@
     "contacts": { "enabled": true },
     "postcards": { "enabled": true },
     "photobook": { "enabled": true },
-    "logging": { "enabled": true },
-    "credits": { "enabled": true },
     "addressLookup": { "enabled": true },
     "weather": { "enabled": true },
     "analytics": { "enabled": true }

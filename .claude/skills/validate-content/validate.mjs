@@ -188,6 +188,27 @@ function checkList(where, schema, value) {
 }
 
 /**
+ * The two capabilities `app/api/v1/{user}/config`'s `view()` (in the
+ * fernscout repo) never reads from a journal's own `features` at all:
+ *
+ *   features[name] = name === "logging" || name === "credits"
+ *     ? serverOnly[name].enabled     // resolveCapabilities() — the operator's
+ *     : user.features[name].enabled; // the journal's own opt-in
+ *
+ * with the comment there reading "`logging` and `credits` are never a
+ * journal's own opt-in". `lib/config.ts`'s `DEFAULT_FEATURES` says the same
+ * at length for both: `logging` is server-only by design (B257), and
+ * `credits` decides whether a send is charged to the *operator's* card and is
+ * "never asked with a username". Nothing published lists this — `/api/health`
+ * answers the same shape for these two as for any other capability, so there
+ * is no live signal to check against the way `CAPABILITY_NAMES` is for
+ * unknown names. This is a named constant pointing at that one function,
+ * accepted as the honest alternative to inventing a published source that
+ * does not exist.
+ */
+const SERVER_ONLY_FEATURES = ["logging", "credits"];
+
+/**
  * `config.json`'s `features` block, checked against the shape the server's
  * own `parseFeatures` (lib/config.ts) accepts — not just the keys, but what
  * sits under each one.
@@ -206,6 +227,15 @@ function checkList(where, schema, value) {
  * name check is skipped entirely: a validator with no list to check against
  * must not invent one, or every capability in a perfectly good journal would
  * come back "unknown".
+ *
+ * `logging` and `credits` are a warning, not an error, and deliberately not
+ * the same mark as the bare boolean: the instance does not refuse either one
+ * — `parseFeatures` accepts the shape fine — and nothing downstream breaks.
+ * What is wrong is quieter: the value is parsed, stored, and never once
+ * *read* back for either name, so an owner who sets `"credits": { "enabled":
+ * true }` believing it does something has been misled, not refused. That is
+ * "accepted and probably not what anybody meant" — this file's own
+ * definition of `warn` — rather than "the instance will refuse this".
  */
 function checkFeatures(where, features) {
   if (typeOf(features) !== "object") return;
@@ -222,6 +252,10 @@ function checkFeatures(where, features) {
     }
     if (typeof value.enabled !== "boolean") {
       error(where, `features.${name}.enabled is ${JSON.stringify(value.enabled)}`, "must be true or false");
+    }
+    if (SERVER_ONLY_FEATURES.includes(name)) {
+      warn(where, `features.${name} is the operator's to set, not the journal's`,
+        "this value is parsed and stored, but never read back for this capability — it does nothing here");
     }
   }
 }

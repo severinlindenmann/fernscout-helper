@@ -3,5 +3,5 @@
   "defaultLocale": "de",
   "locales": ["de", "en"],
   "sparkles": true,
-  "features": { "postcards": true, "wheather": { "enabled": true } }
+  "features": { "postcards": true, "wheather": { "enabled": true }, "credits": { "enabled": true } }
 }
