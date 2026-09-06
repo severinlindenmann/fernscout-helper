@@ -431,8 +431,19 @@ try {
   };
 
   try {
-    const reported = await health({ offline: has("offline") });
+    const reported = await health({ offline: has("offline"), refresh: has("refresh") });
     LIMITS = reported.doc?.media ?? {};
+    // `api.mjs` already refetches a cache with no `media` block on any normal
+    // (online) run, so this only fires with `--offline` or when the network
+    // is down and the fetch fell back to that same stale copy — the cases
+    // where a fresh document genuinely could not be had. Said in the same
+    // place as the schema-unavailable notice below, for the same reason: a
+    // check that did not run must look different from one that ran and found
+    // nothing.
+    if (!reported.doc?.media) {
+      warn("(health)", `no media block in the ${reported.from} /api/health document`,
+        "the photograph format and size checks did not run — retry online, or with --refresh");
+    }
     const off = Object.entries(reported.doc?.capabilities ?? {})
       .filter(([, state]) => !state.enabled)
       .map(([name, state]) => `${name} (${state.reason ?? "off"})`);

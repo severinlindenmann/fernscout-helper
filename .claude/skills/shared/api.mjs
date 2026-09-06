@@ -55,13 +55,24 @@ export async function openapi({ offline = false, refresh = false } = {}) {
  * which the server takes, so a batch was accepted by the local check and
  * refused half-way through the upload.
  */
-export async function health({ offline = false } = {}) {
+export async function health({ offline = false, refresh = false } = {}) {
   const path = join(CACHE, `${SITE.replace(/[^a-z0-9]+/gi, "-")}-health.json`);
   const cached = existsSync(path);
-  const fresh = cached && Date.now() - statSync(path).mtimeMs < FRESH_MS;
-  if (offline || fresh) {
+  const cachedDoc = cached ? JSON.parse(readFileSync(path, "utf8")) : null;
+  // A cached document with no `media` key is not an instance that has no
+  // upload limits — the server has carried `media` since before this cache
+  // format existed, so its absence means the copy predates it. The two are
+  // indistinguishable by looking at the JSON alone, and treating the older
+  // shape as "no limits" is exactly how B579 went unnoticed: the checks that
+  // read `media` simply had nothing to read and said nothing about it. So an
+  // unrecognised shape is always treated as stale, however new the mtime is,
+  // and refetched — a fresh /api/health is cheap, and `offline` is still the
+  // one way to force the old copy through anyway.
+  const recognised = cachedDoc !== null && cachedDoc.media !== undefined;
+  const fresh = cached && recognised && Date.now() - statSync(path).mtimeMs < FRESH_MS;
+  if (offline || (fresh && !refresh)) {
     if (!cached) throw new Error(`No cached /api/health for ${SITE}. Run once online first.`);
-    return { doc: JSON.parse(readFileSync(path, "utf8")), from: "cache" };
+    return { doc: cachedDoc, from: "cache" };
   }
   try {
     const response = await fetch(`${SITE}/api/health`, { headers: { accept: "application/json" } });
@@ -69,7 +80,7 @@ export async function health({ offline = false } = {}) {
     writeFileSync(path, JSON.stringify(doc, null, 1));
     return { doc, from: SITE };
   } catch (error) {
-    if (cached) return { doc: JSON.parse(readFileSync(path, "utf8")), from: "cache (fetch failed)" };
+    if (cached) return { doc: cachedDoc, from: "cache (fetch failed)" };
     throw new Error(`Could not reach ${SITE}/api/health: ${error.message}`);
   }
 }
