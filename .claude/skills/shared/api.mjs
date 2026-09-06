@@ -13,10 +13,22 @@ const CACHE = join(ROOT, "export", ".schema");
 const FRESH_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * A cache file, parsed defensively. `null` covers both "not there" and "there
+ * but not valid JSON" — a half-written file from a killed process, or one
+ * hand-edited into garbage. Either way there is nothing to read out of it, so
+ * the caller treats it exactly like an unrecognised shape: stale, and worth a
+ * refetch rather than a thrown syntax error nobody asked for.
+ */
+function readCache(path) {
+  try { return JSON.parse(readFileSync(path, "utf8")); }
+  catch { return null; }
+}
+
+/**
  * The instance's own contract.
  *
  * `offline` uses the cached copy and never touches the network; without a
- * cached copy that is an error rather than an empty schema, because a
+ * usable cached copy that is an error rather than an empty schema, because a
  * validator that checks nothing and says "no problems" is worse than one that
  * refuses to run.
  */
@@ -24,13 +36,18 @@ export async function openapi({ offline = false, refresh = false } = {}) {
   mkdirSync(CACHE, { recursive: true });
   const path = join(CACHE, `${SITE.replace(/[^a-z0-9]+/gi, "-")}.json`);
   const cached = existsSync(path);
-  const fresh = cached && Date.now() - statSync(path).mtimeMs < FRESH_MS;
+  const cachedDoc = cached ? readCache(path) : null;
+  const usable = cachedDoc !== null;
+  const fresh = usable && Date.now() - statSync(path).mtimeMs < FRESH_MS;
 
   if (offline || (fresh && !refresh)) {
     if (!cached) {
       throw new Error(`No cached schema for ${SITE}. Run once with a network connection first.`);
     }
-    return { doc: JSON.parse(readFileSync(path, "utf8")), from: "cache", site: SITE };
+    if (!usable) {
+      throw new Error(`Cached schema at ${path} is not valid JSON. Delete it and run online, or run without --offline.`);
+    }
+    return { doc: cachedDoc, from: "cache", site: SITE };
   }
 
   try {
@@ -40,8 +57,8 @@ export async function openapi({ offline = false, refresh = false } = {}) {
     writeFileSync(path, JSON.stringify(doc, null, 1));
     return { doc, from: SITE, site: SITE };
   } catch (error) {
-    if (cached) return { doc: JSON.parse(readFileSync(path, "utf8")), from: "cache (fetch failed)", site: SITE };
-    throw new Error(`Could not reach ${SITE}/openapi.json and have no cached copy: ${error.message}`);
+    if (usable) return { doc: cachedDoc, from: "cache (fetch failed)", site: SITE };
+    throw new Error(`Could not reach ${SITE}/openapi.json and have no usable cached copy: ${error.message}`);
   }
 }
 
@@ -58,20 +75,32 @@ export async function openapi({ offline = false, refresh = false } = {}) {
 export async function health({ offline = false, refresh = false } = {}) {
   const path = join(CACHE, `${SITE.replace(/[^a-z0-9]+/gi, "-")}-health.json`);
   const cached = existsSync(path);
-  const cachedDoc = cached ? JSON.parse(readFileSync(path, "utf8")) : null;
+  // `readCache` already folds "not valid JSON" into the same `null` as "not
+  // there" — a corrupt file (half-written, hand-edited into garbage) is the
+  // most unrecognised shape there is, and it must not survive a single run:
+  // without this it throws a raw JSON syntax error out of `JSON.parse` here,
+  // gets caught by validate.mjs's existing "(health)" warning, and is never
+  // rewritten — every later run hits the same corrupt bytes and degrades the
+  // same way, forever, which is exactly the check-loss this ticket is about,
+  // just reached by a different door than a missing `media` key.
+  const cachedDoc = cached ? readCache(path) : null;
   // A cached document with no `media` key is not an instance that has no
   // upload limits — the server has carried `media` since before this cache
   // format existed, so its absence means the copy predates it. The two are
   // indistinguishable by looking at the JSON alone, and treating the older
   // shape as "no limits" is exactly how B579 went unnoticed: the checks that
   // read `media` simply had nothing to read and said nothing about it. So an
-  // unrecognised shape is always treated as stale, however new the mtime is,
-  // and refetched — a fresh /api/health is cheap, and `offline` is still the
-  // one way to force the old copy through anyway.
+  // unrecognised shape — no `media` key, or not parseable at all — is always
+  // treated as stale, however new the mtime is, and refetched — a fresh
+  // /api/health is cheap, and `offline` is still the one way to force the old
+  // copy through anyway.
   const recognised = cachedDoc !== null && cachedDoc.media !== undefined;
   const fresh = cached && recognised && Date.now() - statSync(path).mtimeMs < FRESH_MS;
   if (offline || (fresh && !refresh)) {
     if (!cached) throw new Error(`No cached /api/health for ${SITE}. Run once online first.`);
+    if (cachedDoc === null) {
+      throw new Error(`Cached /api/health at ${path} is not valid JSON. Delete it and run online, or run without --offline.`);
+    }
     return { doc: cachedDoc, from: "cache" };
   }
   try {
@@ -80,8 +109,8 @@ export async function health({ offline = false, refresh = false } = {}) {
     writeFileSync(path, JSON.stringify(doc, null, 1));
     return { doc, from: SITE };
   } catch (error) {
-    if (cached) return { doc: cachedDoc, from: "cache (fetch failed)" };
-    throw new Error(`Could not reach ${SITE}/api/health: ${error.message}`);
+    if (cachedDoc !== null) return { doc: cachedDoc, from: "cache (fetch failed)" };
+    throw new Error(`Could not reach ${SITE}/api/health and have no usable cached copy: ${error.message}`);
   }
 }
 
