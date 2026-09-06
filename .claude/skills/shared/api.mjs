@@ -114,69 +114,6 @@ export async function health({ offline = false, refresh = false } = {}) {
   }
 }
 
-/**
- * The file shape itself — `<site>/content-model.json`, B608's answer to the
- * one part of the contract `openapi.json` and `/api/health` cannot describe:
- * which keys a file on disk may carry. Same cache, same day, same
- * `--offline`/`--refresh` — this is not a second caching path, it is the same
- * one with a third file in it.
- *
- * Unlike `openapi()` and `health()`, having none of this is an ordinary,
- * expected outcome rather than a failure to surface: an instance older than
- * B608 simply does not publish it yet, and `contentModel.mjs` falls back to
- * `model.mjs` for exactly that reason. So this never throws. A 404, an
- * unreachable host, a document with no recognisable `contentModel` version,
- * and one that does not even parse as JSON are all reported back as `doc:
- * null` with a `note` saying which — the caller decides what "no manifest"
- * means for it, this function's job stops at "here is what happened".
- *
- * "Unrecognised" is treated exactly the way B579 made `health()` treat a
- * `media`-less cache: not a fresh document with nothing to say, but a stale
- * one worth refetching regardless of its mtime. A response that is not valid
- * JSON, or has no integer `contentModel`, cannot be told apart from an old
- * cached copy by looking at the file alone — so both are refetched rather
- * than trusted.
- */
-export async function contentModel({ offline = false, refresh = false } = {}) {
-  const path = join(CACHE, `${SITE.replace(/[^a-z0-9]+/gi, "-")}-content-model.json`);
-  const cached = existsSync(path);
-  const cachedDoc = cached ? readCache(path) : null;
-  const recognised = cachedDoc !== null && Number.isInteger(cachedDoc.contentModel);
-  const fresh = cached && recognised && Date.now() - statSync(path).mtimeMs < FRESH_MS;
-
-  if (offline || (fresh && !refresh)) {
-    if (!cached) return { doc: null, from: "none", note: `no cached content model for ${SITE} — run once online first` };
-    if (!recognised) return { doc: null, from: "cache", note: `cached content model at ${path} is not a recognised document` };
-    return { doc: cachedDoc, from: "cache" };
-  }
-
-  let response;
-  try {
-    response = await fetch(`${SITE}/content-model.json`, { headers: { accept: "application/json" } });
-  } catch (error) {
-    if (recognised) return { doc: cachedDoc, from: "cache (fetch failed)" };
-    return { doc: null, from: "none", note: `could not reach ${SITE}/content-model.json: ${error.message}` };
-  }
-  if (response.status === 404) {
-    return { doc: null, from: "none", note: `${SITE} publishes no /content-model.json — an instance older than B608` };
-  }
-  if (!response.ok) {
-    if (recognised) return { doc: cachedDoc, from: "cache (fetch failed)" };
-    return { doc: null, from: "none", note: `${SITE}/content-model.json answered ${response.status} ${response.statusText}` };
-  }
-  let doc;
-  try { doc = await response.json(); }
-  catch {
-    if (recognised) return { doc: cachedDoc, from: "cache (fetch failed)" };
-    return { doc: null, from: "none", note: `${SITE}/content-model.json did not answer with JSON` };
-  }
-  writeFileSync(path, JSON.stringify(doc, null, 1));
-  if (!Number.isInteger(doc.contentModel)) {
-    return { doc: null, from: "none", note: `${SITE}/content-model.json has no recognisable "contentModel" version` };
-  }
-  return { doc, from: SITE };
-}
-
 /** Follow a `$ref` into the document's own components. */
 export function deref(schema, doc) {
   const name = schema?.$ref?.split("/").pop();
