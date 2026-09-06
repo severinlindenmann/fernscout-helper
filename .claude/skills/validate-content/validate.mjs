@@ -19,7 +19,8 @@
 import { existsSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import { arg, has } from "../shared/lib.mjs";
-import { COST_KEYS, GALLERY_KEYS, MODEL, crosscheck } from "../shared/model.mjs";
+import { crosscheck } from "../shared/model.mjs";
+import { resolveModel } from "../shared/contentModel.mjs";
 import { galleryFile, readJournal, usernames } from "../shared/journal.mjs";
 import { deref, health, openapi, requestSchema } from "../shared/api.mjs";
 
@@ -78,6 +79,17 @@ const typeOf = (value) => (Array.isArray(value) ? "array" : value === null ? "nu
 let API = { trip: {}, day: {}, journal: {}, cost: {}, gallery: {} };
 /** The whole published document, kept so a `$ref` inside a schema resolves. */
 let DOC = null;
+
+/**
+ * The file shape — which keys a file on disk may carry at all. Resolved once,
+ * below, from `<site>/content-model.json` when there is one to read and an
+ * instance recent enough to have published it; `shared/model.mjs` otherwise.
+ * Everything past this point reads these three exactly as it always has —
+ * `checkKeys()` and `checkValue()` do not know or care which source filled
+ * them in, which is what makes "identical findings either way" a fact about
+ * the data rather than a promise about the code.
+ */
+let MODEL, COST_KEYS, GALLERY_KEYS;
 
 function ruleFor(scope, key, local = {}) {
   const published = API[scope]?.properties?.[key];
@@ -587,6 +599,23 @@ try {
   }
 } catch (failure) {
   warn("(schema)", failure.message, "checked the file format only; the instance's own rules were not consulted");
+}
+
+// The file shape, from the manifest when there is one to read, `model.mjs`
+// otherwise. `resolveModel()` never throws — an instance with no
+// content-model.json yet is the ordinary case B609 exists to keep working
+// through, not a failure to report as one.
+{
+  const resolved = await resolveModel({ offline: has("offline"), refresh: has("refresh") });
+  MODEL = resolved.MODEL;
+  COST_KEYS = resolved.COST_KEYS;
+  GALLERY_KEYS = resolved.GALLERY_KEYS;
+  if (!has("json")) console.log(`File shape from ${resolved.source}`);
+  // Each of these is a named edge case W41 asks never to fail quietly: an
+  // `assert` kind this client does not know, a `named` check it has not
+  // implemented, a rejected `pattern`, or a manifest whose rules folded into
+  // nothing usable for a file that should have them.
+  for (const notice of resolved.notices) warn("(content-model)", notice.message);
 }
 
 for (const user of users) {
