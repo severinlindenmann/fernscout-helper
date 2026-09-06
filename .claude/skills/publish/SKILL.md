@@ -62,6 +62,11 @@ node publish.mjs --user them --email them@example.com            # asks for the 
 node publish.mjs --user them --email them@example.com --code 123456
 ```
 
+`--dry-run` will not mail the code — it says it would and stops, because a
+signup mail is not a thing to rehearse. So for a journal that does not exist
+yet the dry run cannot show you a full plan; there is nothing to plan against
+until the journal is there.
+
 The second run creates the journal from `config.json`, then does the whole
 publish in the same breath — trip, days, photographs, on the site. It prints a
 **sign-in link for the person** (once, fifteen minutes) and the journal's own

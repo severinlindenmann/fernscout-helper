@@ -115,6 +115,17 @@ if (status.status === 404 || status.status === 401) {
     process.exit(1);
   }
   if (!code) {
+    // A dry run sends nothing, and that has to include this. It used to mail a
+    // real six-digit code from a run whose whole promise is "nothing is sent"
+    // — a person got a signup mail for a journal nobody had decided to create.
+    if (dry) {
+      console.log(
+        `Would ask ${SITE} to mail a signup code to ${email}, and stop there.\n` +
+        "A new journal is bound to an address somebody owns, so that step cannot be\n" +
+        "rehearsed. Run without --dry-run when they are ready, then again with --code.",
+      );
+      process.exit(0);
+    }
     const asked = await call("POST", "/api/auth/signup/request", {
       auth: false,
       body: { username: user, email },
