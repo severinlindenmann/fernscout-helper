@@ -74,6 +74,11 @@ const HTML = String.raw`<!doctype html><meta charset="utf-8"><meta name=viewport
  .keep{width:100%;min-height:44px;font:inherit;font-weight:600;border-radius:8px;cursor:pointer;
        border:2px solid var(--ok);color:var(--ok);background:#fff}
  figure.drop .keep{border-color:var(--no);color:var(--no)}
+ .vis{width:100%;min-height:40px;margin-top:.4rem;font:inherit;border-radius:8px;
+       border:1px solid var(--line);background:#fff;color:inherit;padding:0 .4rem}
+ /* Held back at all: enough to pick out of a grid of three hundred without
+    shouting, since it is the uncommon case and not an error. */
+ figure.held .vis{border:2px solid var(--blue-500);font-weight:600}
  .note{margin-top:.4rem;height:2.8rem;font-size:.95rem}
  #done{margin:3rem 0 0;padding:1.25rem 1.5rem;background:var(--cream-100);border:1px solid var(--cream-200);
        border-left:6px solid var(--yellow-400);border-radius:10px;max-width:46rem}
@@ -92,6 +97,10 @@ const HTML = String.raw`<!doctype html><meta charset="utf-8"><meta name=viewport
   sent you — press <b>Keep</b> once to turn it off. Press it again to turn it back on.</p>
  <p class=lede><b>2.</b> Write a few words about each day in the big box. The journal text is written
   from those words, so anything you do not write there will not appear.</p>
+ <p class=lede><b>3.</b> If one picture should be seen by fewer people than the rest of the day,
+  say so under it: <b>Guests only</b> means everybody you have let into the journal,
+  <b>Private</b> means only the people who were on the trip. It can only ever hide a photo from
+  people the trip already lets in — it never shows one to anybody else.</p>
  <p class=lede>Everything saves by itself. You can close the page and come back.</p>
 </header>
 <div id=app>Loading the photos…</div>
@@ -124,7 +133,7 @@ const save = () => {
     saved.textContent = "all saved";
   }, 400);
 };
-const st = (file) => (state.photos[file] ??= { drop: false, note: "" });
+const st = (file) => (state.photos[file] ??= { drop: false, note: "", visibility: "" });
 const count = () => {
   const dropped = data.photos.filter((p) => st(p.file).drop).length;
   stat.textContent = (data.photos.length - dropped) + " photos kept · " + dropped + " turned off";
@@ -155,12 +164,16 @@ for (const [day, list] of Object.entries(byDay)) {
   const grid = $("div", { className: "grid" });
   for (const p of list) {
     const s = st(p.file);
-    grid.append($("figure", { className: s.drop ? "drop" : "" },
+    grid.append($("figure", { className: [s.drop && "drop", s.visibility && "held"]
+      .filter(Boolean).join(" ") },
       $("img", { src: "/img/" + p.file, loading: "lazy", decoding: "async", alt: "", dataset: { file: p.file } }),
       $("div", { className: "meta" },
         $("span", { textContent: (p.fav ? "♥ " : "") + p.time }),
         $("a", { href: "/full/" + p.file, target: "_blank", textContent: "see it big ↗" })),
       $("button", { className: "keep", textContent: label(s.drop), dataset: { file: p.file } }),
+      $("select", { className: "vis", dataset: { file: p.file } },
+        [["", "Everyone who can see the trip"], ["guest", "Guests only"], ["private", "Private"]]
+          .map(([value, text]) => $("option", { value, text, selected: s.visibility === value }))),
       $("textarea", { className: "note", placeholder: "A note about this photo (optional)",
         value: s.note, dataset: { file: p.file } })));
   }
@@ -169,12 +182,19 @@ for (const [day, list] of Object.entries(byDay)) {
     const el = e.target.closest("img, button.keep"); if (!el) return;
     const s = st(el.dataset.file), fig = el.closest("figure");
     s.drop = !s.drop;
-    fig.className = s.drop ? "drop" : "";
+    fig.className = [s.drop && "drop", s.visibility && "held"].filter(Boolean).join(" ");
     fig.querySelector("button.keep").textContent = label(s.drop);
     count(); save();
   };
   grid.oninput = (e) => {
     if (e.target.matches("textarea.note")) { st(e.target.dataset.file).note = e.target.value; save() }
+  };
+  grid.onchange = (e) => {
+    if (!e.target.matches("select.vis")) return;
+    const s = st(e.target.dataset.file), fig = e.target.closest("figure");
+    s.visibility = e.target.value;
+    fig.className = [s.drop && "drop", s.visibility && "held"].filter(Boolean).join(" ");
+    save();
   };
   app.append(grid);
 }

@@ -93,7 +93,17 @@ them start:
 
 > Go through the photos day by day. Press **Keep** on anything that does not
 > belong to the trip to turn it off, and write a few words about each day in the
-> big box — that is what the text gets written from.
+> big box — that is what the text gets written from. If one picture should be
+> seen by fewer people than the rest of the day, set the dropdown under it to
+> **Guests only** or **Private**.
+
+The dropdown is the one thing on the page nobody expects, so **say it in words
+rather than leaving them to find it.** It is per photograph, and it can only
+ever narrow: **Guests only** means everybody they have let into the journal,
+**Private** means only the people who were on the trip. It never shows a
+picture to somebody the trip itself keeps out. Most photos want none of it —
+the whole trip's own visibility is the answer for the whole trip, and this is
+for the one frame with a stranger's child or somebody's front door in it.
 
 Then **stop and wait.** Do not poll the file, do not guess when they are done.
 The page ends with a note telling them to come back and say "I am done with the
@@ -111,6 +121,13 @@ One entry per day, in `content/<user>/trips/<trip>/`. Photographs are resized to
 2000px and **stripped of all metadata** — a phone writes the coordinates of
 somebody's front door into a file — with the coordinates kept in the frontmatter
 instead, where they can be seen and deleted. Photo notes become captions.
+
+Anything held back on the review page is written as `visibility: "guest"` or
+`visibility: "private"` inside its gallery item. On a running site that photo
+is absent from the gallery, absent from the day, and its file answers 404 to
+anybody below that level — it is not merely hidden from the page. Nothing is
+written for a picture nobody held back, which is what the ordinary case looks
+like.
 
 It leaves two things empty on purpose: **every title, and every paragraph.**
 
@@ -142,6 +159,13 @@ A paragraph about what this trip was, from what they told you.
 
 `private` means the people who were there. Never widen it without being asked,
 and never write a `passwordHash:` line.
+
+A **photograph's** own label is the narrower version of the same idea, and it
+only ever narrows: a `guest` photo inside a `private` trip stays private,
+because a label cannot let anybody past the gate the trip is already holding.
+There is no `public` — a picture nobody held back is already everybody's who
+can see the trip. If they ask for one photo to be held back and the whole trip
+is already `private`, say so rather than writing a label that changes nothing.
 
 ## 7. Offer what is still missing
 

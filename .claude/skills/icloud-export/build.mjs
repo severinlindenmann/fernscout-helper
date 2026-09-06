@@ -62,7 +62,8 @@ for (const [day, list] of Object.entries(byDay).sort()) {
     const dim = execFileSync("sips", ["-g", "pixelWidth", "-g", "pixelHeight", dest], { encoding: "utf8" });
     const [w, h] = [/pixelWidth: (\d+)/, /pixelHeight: (\d+)/].map((re) => Number(dim.match(re)?.[1] ?? 0));
     copied++;
-    return { src: `/media/${trip}/${daySlug}/${name}`, w, h, caption: p.note };
+    return { src: `/media/${trip}/${daySlug}/${name}`, w, h, caption: p.note,
+             visibility: review.photos?.[p.file]?.visibility || "" };
   });
 
   const first = list[0], withGps = list.find((p) => p.lat);
@@ -77,6 +78,10 @@ for (const [day, list] of Object.entries(byDay).sort()) {
     ...gallery.flatMap((g) => [
       `  - src: "${g.src}"`,
       ...(g.caption ? [`    caption: ${JSON.stringify(g.caption)}`] : []),
+      // Only ever written for a picture the person held back on the review
+      // page. An absent line is what "everyone the trip lets in" looks like,
+      // and the label can only narrow that — never widen it.
+      ...(g.visibility ? [`    visibility: ${JSON.stringify(g.visibility)}`] : []),
       `    type: "image"`, `    width: ${g.w}`, `    height: ${g.h}`,
     ]),
     "status: draft",
