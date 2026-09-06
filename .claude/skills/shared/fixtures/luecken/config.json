@@ -2,5 +2,6 @@
   "title": "Lücken Journal",
   "defaultLocale": "de",
   "locales": ["de", "en"],
-  "sparkles": true
+  "sparkles": true,
+  "features": { "postcards": true, "wheather": { "enabled": true } }
 }
