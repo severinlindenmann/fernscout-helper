@@ -18,9 +18,17 @@ yet are sent; then each day is published.
 
 **Running it twice is safe and does not duplicate anything** — no second trip,
 no second day, no photograph uploaded twice. It is not silent, though: a second
-run still sends the settings and the day bodies again, because the folder is
-the source of truth and re-sending is how an edit on disk reaches the site. So
-the plan it prints on a second run is shorter than the first, not empty.
+run still sends the day bodies again, because the folder is the source of
+truth and re-sending is how an edit on disk reaches the site. So the plan it
+prints on a second run is shorter than the first, not empty.
+
+For a trip that already exists, only what has its own door goes out on a
+second run: `visibility`/`listed`, `rates`, `people`, `travellers` and
+`tracks`. `title`, `start`, `end`, `tagline`, `accent`, `intro` and
+`translations` have no door yet on an existing trip (B245, in the fernscout
+repo) — editing those in `trip.md` after the trip is created does not reach
+the site, and the run prints a warning naming whichever of them it finds
+disagreeing with what the site shows, rather than reaching the site.
 
 ```
 --user <username>     which journal. Required
@@ -137,7 +145,13 @@ Everything the file carries, not the fields anyone remembers:
 
 | From | To |
 | --- | --- |
-| `trip.md` frontmatter + its prose | `POST …/trips` (the prose becomes `intro`) |
+| `trip.md` frontmatter + its prose, a trip that does not exist yet | `POST …/trips` (the prose becomes `intro`) |
+| `visibility:` / `listed:` on a trip that already exists | `PATCH …/trips/<trip>/visibility` |
+| `rates:` on a trip that already exists | `PATCH …/trips/<trip>/rates` |
+| `people:` on a trip that already exists | `PATCH …/trips/<trip>/people` |
+| `travellers:` on a trip that already exists | `PATCH …/trips/<trip>/travellers` |
+| `tracks:` on a trip that already exists | `PATCH …/trips/<trip>/tracks` |
+| `title`/`start`/`end`/`tagline`/`accent`/`intro`/`translations` edited on a trip that already exists | nowhere — no door yet (B245); the run warns instead |
 | `costs.md` budget, costs and prose | `PUT …/trips/<trip>/costs` |
 | each `entries/*.md` + its prose | `POST …/days` (`content`), or `PATCH` if it is there |
 | `without: [costs]` on a day | `costs: false` — *there was no money on this day* |

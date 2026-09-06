@@ -284,6 +284,57 @@ for (const trip of journal.trips) {
         if (!patched.ok) refuse(patched, `PATCH …/${trip.id}/rates`);
       }
     }
+    // B524 built three more doors for a trip that already exists — people,
+    // travellers, tracks — and this used to walk through none of them: an
+    // edited trip.md said nothing had changed as long as the trip itself was
+    // already there. "trip is already there" is not "trip.md has nothing left
+    // to send".
+    if (data.people && data.people.length) {
+      note(`  ${step("set the trip's people")}`);
+      if (!dry) {
+        const patched = await call("PATCH", `/api/v1/${user}/trips/${trip.id}/people`, { body: { people: data.people } });
+        if (!patched.ok) refuse(patched, `PATCH …/${trip.id}/people`);
+      }
+    }
+    if (data.travellers && data.travellers.length) {
+      note(`  ${step("set the trip's travellers")}`);
+      if (!dry) {
+        const patched = await call("PATCH", `/api/v1/${user}/trips/${trip.id}/travellers`, { body: { travellers: data.travellers } });
+        if (!patched.ok) refuse(patched, `PATCH …/${trip.id}/travellers`);
+      }
+    }
+    if (data.tracks && Object.keys(data.tracks).length) {
+      note(`  ${step("set what the trip tracks")}`);
+      if (!dry) {
+        const patched = await call("PATCH", `/api/v1/${user}/trips/${trip.id}/tracks`, { body: { tracks: data.tracks } });
+        if (!patched.ok) refuse(patched, `PATCH …/${trip.id}/tracks`);
+      }
+    }
+
+    // The fields with no door at all — B245, still open. Silence here is what
+    // B572 was: a `trip.md` edited after the first publish, and nothing
+    // saying so. This cannot write them, but it can say which of them differ
+    // from what the site already shows, so an operator finds out from this
+    // run rather than from the site looking wrong later.
+    const detail = offline ? { ok: false } : await call("GET", `/api/v1/${user}/trips/${trip.id}`);
+    if (detail.ok) {
+      const live = detail.body ?? {};
+      const stale = [];
+      for (const key of ["title", "start", "end", "tagline", "accent", "translations", "cover"]) {
+        if (data[key] === undefined || data[key] === null) continue;
+        if (JSON.stringify(data[key]) !== JSON.stringify(live[key])) stale.push(key);
+      }
+      if (trip.trip?.body && trip.trip.body !== (live.intro ?? "")) stale.push("intro");
+      if (stale.length) {
+        console.log(
+          `  ⚠ ${stale.join(", ")} differ${stale.length === 1 ? "s" : ""} from what ${SITE} shows, ` +
+          `and there is no call that can change ${stale.length === 1 ? "it" : "them"} on an existing trip ` +
+          "(B245, in the fernscout repo, still open). Edit it there by hand for now.",
+        );
+      }
+    } else if (!offline) {
+      console.log(`      note: could not read the trip back to check title/start/end/tagline/accent/intro/translations/cover (${detail.status})`);
+    }
   }
 
   // ── the budget and the costs paid before leaving ─────────────────────────
