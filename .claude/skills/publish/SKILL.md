@@ -30,6 +30,18 @@ repo) — editing those in `trip.md` after the trip is created does not reach
 the site, and the run prints a warning naming whichever of them it finds
 disagreeing with what the site shows, rather than reaching the site.
 
+**Retitling a day is safe.** The first time this script writes a day it
+records the slug the instance assigned back into that entry's own frontmatter
+(`slug: "…"`, alongside `title:` and `date:`) — the same idea as a trip's own
+`id:`. A later run matches by that recorded slug first, so fixing a typo in
+`title:` still finds the same day and updates it, rather than looking like a
+new one. A day written before this existed, or one edited before ever being
+published again, falls back to matching by date and title as it always did,
+and — only if that misses too and exactly one day on the instance shares the
+date — to the date alone, which the run prints as a guess (`⚠ matched … loosely,
+by date alone`). Two days sharing a date are never guessed between; a
+genuinely new day on a date that already has one is still created.
+
 ```
 --user <username>     which journal. Required
 --email <address>     create the journal too, if it is not there yet

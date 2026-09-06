@@ -147,6 +147,16 @@ export const MODEL = {
       gallery: { type: "array", fileOnly: true, note: "the photographs. Not part of the day's body over the API — POST them to …/media" },
       cover: { type: "string", fileOnly: true },
       status: { type: "string", enum: ["draft"], fileOnly: true, note: "publishing is a separate call, never a field" },
+      slug: {
+        type: "string",
+        fileOnly: true,
+        note:
+          "the slug the instance assigned when publish.mjs first wrote this day — recorded here the way a " +
+          "trip's own id: records its folder name, so a later retitle does not lose the day. Written by " +
+          "publish.mjs itself after every write; never sent, and not something to set by hand. B578: a day used " +
+          "to be found again only by matching its date and title, and a title is the one part of a day a person " +
+          "is expected to edit — fix a typo and the next run could no longer find it.",
+      },
     },
   },
 

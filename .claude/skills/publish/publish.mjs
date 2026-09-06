@@ -24,7 +24,7 @@
 // content the instance will partly reject leaves a journal half-written, which
 // is worse than not starting — and the errors are cheap to read first.
 import { execFileSync } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { arg, has } from "../shared/lib.mjs";
@@ -57,6 +57,37 @@ function refuse(result, what) {
   console.error(`\n✗ ${what}\n      ${refusal(result).replace(/\n/g, "\n")}`);
   console.error("\nNothing further was sent. Fix the above and run again — what already landed stays.");
   process.exit(1);
+}
+
+/**
+ * Set (or fix) the `slug:` line in an entry's own frontmatter — textually,
+ * the same discipline the server itself uses when it edits a file (see
+ * `spliceScalar` in the fernscout repo): find the line if it is there, replace
+ * it; otherwise insert one just above the closing `---`. Never touches
+ * anything else in the file, so a hand-written comment or key order survives.
+ *
+ * B578. A day's title is something a person edits — fixing a typo, rewording
+ * it — and title+date used to be the *only* way this script found a day it
+ * had already written. Recording the slug the instance actually assigned,
+ * once, the way `id:` records a trip's own address, means a later run finds
+ * the same day even after every other field on it has changed. Skipped
+ * entirely on a file with no frontmatter block to edit, and never called
+ * during `--dry-run` — a plan sends nothing, and that includes this.
+ */
+function recordSlug(entry, slug) {
+  if (entry.data.slug === slug) return;
+  const lines = entry.text.split("\n");
+  if (lines[0]?.trim() !== "---") return;
+  const closing = lines.findIndex((line, i) => i > 0 && line.trim() === "---");
+  if (closing < 0) return;
+  const at = lines.findIndex((line, i) => i > 0 && i < closing && /^slug:(\s|$)/.test(line));
+  const rendered = `slug: "${slug}"`;
+  if (at >= 0) lines[at] = rendered;
+  else lines.splice(closing, 0, rendered);
+  const updated = lines.join("\n");
+  writeFileSync(entry.path, updated);
+  entry.text = updated;
+  entry.data.slug = slug;
 }
 
 // ── 1. the content has to be right before any of it is sent ────────────────
@@ -358,13 +389,37 @@ for (const trip of journal.trips) {
   // photographs to a day that did not exist, and — worse, on a second run —
   // would have written every day again under the name it expected.
   //
-  // So: find the day the instance already has by what identifies it to a
-  // reader (its date and its title), and take the slug from the answer.
+  // So: find the day the instance already has, and take the slug from the
+  // answer. Three ways, tried in order of how sure they are — B578, after a
+  // retitled day was found "new" by the second of these, which then hit the
+  // idempotency key from its first write and stopped the whole run on a 409
+  // whose message was about a key, not about a day that just needed updating:
+  //
+  //   1. the slug this same script recorded into the file the last time it
+  //      wrote this day (see `recordSlug` above) — exact, and survives any
+  //      retitle or rename, because it does not depend on either.
+  //   2. date + title, unchanged since the day was last sent — exact, and the
+  //      only test this file used before B578.
+  //   3. date alone, when exactly one remote day shares it — a guess, made
+  //      only when the first two have nothing, and named as a guess in what
+  //      this prints. Two days sharing a date are left alone rather than
+  //      guessed at; a genuinely new day on a date that already has one is
+  //      still created.
   const listed = await call("GET", `/api/v1/${user}/trips/${trip.id}/days`);
   if (!listed.ok) refuse(listed, `GET …/${trip.id}/days`);
-  const already = new Map(
-    (listed.body?.days ?? listed.body?.entries ?? []).map((d) => [`${d.date}|${d.title}`, d]),
-  );
+  const days = listed.body?.days ?? listed.body?.entries ?? [];
+  const bySlug = new Map(days.map((d) => [d.slug, d]));
+  const byTitleDate = new Map(days.map((d) => [`${d.date}|${d.title}`, d]));
+  const byDate = new Map();
+  for (const d of days) {
+    if (!byDate.has(d.date)) byDate.set(d.date, []);
+    byDate.get(d.date).push(d);
+  }
+  // A remote day matched once by any of the three ways below is not offered
+  // to a second local file in the same run — otherwise a genuinely new day
+  // sharing a date with one already claimed by the date-only guess would be
+  // "matched" onto it too, and never created at all.
+  const claimed = new Set();
 
   for (const entry of trip.entries) {
     const date = entry.data.date ?? entry.fileDate;
@@ -385,8 +440,31 @@ for (const trip of journal.trips) {
     for (const track of entry.data.without ?? []) body[track] = false;
     for (const track of entry.data.unrecorded ?? []) body[track] = "unknown";
 
-    const existing = already.get(`${date}|${entry.data.title}`);
+    const recorded = typeof entry.data.slug === "string" ? entry.data.slug : null;
+    let existing = null;
+    let how = null;
+    if (recorded && bySlug.has(recorded) && !claimed.has(recorded)) {
+      existing = bySlug.get(recorded);
+      if (existing.title !== entry.data.title || existing.date !== date) {
+        how = `by its recorded slug "${recorded}" — its title or date on the instance ` +
+          `no longer match this file, which is exactly the edit this match is meant to survive`;
+      }
+    }
+    if (!existing) {
+      const byTD = byTitleDate.get(`${date}|${entry.data.title}`);
+      if (byTD && !claimed.has(byTD.slug)) existing = byTD;
+    }
+    if (!existing) {
+      const sameDate = (byDate.get(date) ?? []).filter((d) => !claimed.has(d.slug));
+      if (sameDate.length === 1) {
+        existing = sameDate[0];
+        how = `loosely, by date alone (${date}) — neither its recorded slug nor its title ` +
+          `matched, and this was the only day the instance has on that date`;
+      }
+    }
     let slug = existing?.slug ?? null;
+    if (slug) claimed.add(slug);
+    if (how) console.log(`  ⚠ matched ${slug} ${how}`);
 
     if (!slug) {
       note(`  ${step(`write ${entry.file}`)}`);
@@ -395,9 +473,39 @@ for (const trip of journal.trips) {
         const made = await call("POST", `/api/v1/${user}/trips/${trip.id}/days`, {
           body: { ...body, idempotency_key: `${trip.id}:${entry.slug}` },
         });
-        if (!made.ok) refuse(made, `POST …/days (${entry.file})`);
-        slug = made.body.slug;
-        note(`      → ${slug}`);
+        if (made.ok) {
+          slug = made.body.slug;
+          claimed.add(slug);
+          note(`      → ${slug}`);
+        } else if (made.status === 409 && made.body?.error === "idempotency_key_reused") {
+          // Not really a refusal — a caller reading "idempotency_key_reused"
+          // has no reason to think of a day at all, and the actual cause here
+          // is almost always this file's title having changed since the day
+          // was first written: the matches above missed it (no recorded slug
+          // yet, and more than one day shares its date), so it looked new,
+          // and its idempotency key is the one its *old* title produced.
+          // B578. The server's own refusal names the slug that key already
+          // belongs to, so the day is not lost — update it there instead of
+          // failing the whole run over what is really a match this script
+          // could not make on its own.
+          const recovered = String(made.body?.message ?? "").match(/created "([^"]+)"/)?.[1];
+          if (!recovered) {
+            refuse(made,
+              `POST …/days (${entry.file}) — this day already exists under a different title, ` +
+              "but its slug could not be read out of the refusal, so nothing more could be done.");
+          }
+          console.log(
+            `  ⚠ this is not a new day: the instance already holds it as "${recovered}", under a title ` +
+            "this file no longer carries. Updating it there instead of writing a second day.",
+          );
+          note(`  ${step(`update ${recovered}`)}`);
+          const patched = await call("PATCH", `/api/v1/${user}/trips/${trip.id}/days/${recovered}`, { body });
+          if (!patched.ok) refuse(patched, `PATCH …/days/${recovered}`);
+          slug = recovered;
+          claimed.add(slug);
+        } else {
+          refuse(made, `POST …/days (${entry.file})`);
+        }
       }
     } else {
       note(`  ${step(`update ${slug}`)}`);
@@ -406,6 +514,7 @@ for (const trip of journal.trips) {
         if (!patched.ok) refuse(patched, `PATCH …/days/${slug}`);
       }
     }
+    if (!dry && slug) recordSlug(entry, slug);
 
     // ── the photographs ────────────────────────────────────────────────────
     // The instance's own gallery is the record of what has been sent, so a
