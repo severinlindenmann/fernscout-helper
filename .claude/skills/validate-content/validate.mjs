@@ -347,6 +347,35 @@ function checkJournal(user, only) {
           "journal's to fix: narrow locales in config.json");
       }
 
+      // `weather` is `apiOnly` — a file never carries it — but it is also
+      // `offerable`: an opt-in worth telling somebody about, not plumbing to
+      // stay quiet about. It needs coordinates (the server refuses a guess
+      // from the trip's other days or the nearest city), so a day with
+      // neither lat nor lng gets no tip at all — there is nothing honest to
+      // offer it. Two different sentences past that point, because "this
+      // could carry weather" and "this could carry weather, but nobody has
+      // switched it on yet" are not the same finding: B573's own bug was a
+      // journal-level toggle nobody knew existed, sitting one level under
+      // this one (the server capability), and a tip that skipped over it
+      // would recreate the exact failure it exists to fix.
+      if (entry.data.lat !== undefined && entry.data.lng !== undefined && WEATHER_CAPABLE) {
+        if (journal.config?.features?.weather?.enabled !== true) {
+          tip(entryWhere, "weather is not set",
+            "this day has coordinates, so the Open-Meteo archive could fill in what the weather " +
+            "actually was — but this journal has not switched weather on. Add " +
+            '`"weather": { "enabled": true }` to config.json\'s features, then publish with ' +
+            "--weather. Never send a reading from memory: without the journal's own opt-in the " +
+            "request is accepted and does nothing, which is worse than refusing it outright.",
+            "weather");
+        } else {
+          tip(entryWhere, "weather is not set",
+            "this day has coordinates — publish with --weather to ask the server to look up what " +
+            "it actually was, for this lat/lng and date, from the Open-Meteo archive. A day with " +
+            "no coordinates gets nothing rather than a guess, and so does this one until you ask.",
+            "weather");
+        }
+      }
+
       const gallery = entry.data.gallery;
       if ((!gallery || (Array.isArray(gallery) && gallery.length === 0)) && tracks.photos !== false && !declined.has("photos")) {
         tip(entryWhere, "has no photographs", "POST them to …/trips/<trip>/media with this day's slug");
@@ -416,6 +445,10 @@ if (users.length === 0) {
 }
 
 let LIMITS = {};
+// The server's own ceiling for weather — `/api/health`'s `capabilities.weather`.
+// A journal's `config.json` still has to opt in on top of this (checked per
+// entry, below); this is only "can this instance ever say yes at all".
+let WEATHER_CAPABLE = false;
 
 try {
   const { doc, from, site } = await openapi({ offline: has("offline"), refresh: has("refresh") });
@@ -439,6 +472,7 @@ try {
   try {
     const reported = await health({ offline: has("offline"), refresh: has("refresh") });
     LIMITS = reported.doc?.media ?? {};
+    WEATHER_CAPABLE = reported.doc?.capabilities?.weather?.enabled === true;
     // `api.mjs` already refetches a cache with no `media` block on any normal
     // (online) run, so this only fires with `--offline` or when the network
     // is down and the fetch fell back to that same stale copy — the cases

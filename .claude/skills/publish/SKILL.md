@@ -38,6 +38,7 @@ disagreeing with what the site shows, rather than reaching the site.
 --dry-run             print every call it would make, send none
 --offline             with --dry-run: skip even the reads, print an unconfirmed plan
 --drafts              write and upload, but do not put anything on the site
+--weather             ask the archive for the weather, on every day with lat/lng
 --skip-validate       start even though validate-content reports errors
 ```
 
@@ -91,6 +92,40 @@ publish in the same breath — trip, days, photographs, on the site. It prints a
 **sign-in link for the person** (once, fifteen minutes) and the journal's own
 seven-day token. Hand over the sign-in link in your reply, immediately; do not
 write the token into a file in this repository.
+
+## `--weather`, for a trip whose days have coordinates
+
+`weather` is not a field anybody writes into an entry — it is an instruction
+to the server, not content, so `validate-content` can only ever *tip* that it
+exists (see its `SKILL.md`). Saying yes to it happens here, once, for the
+whole run:
+
+```bash
+node publish.mjs --user severin --weather
+```
+
+Every day that has `lat`/`lng` gets `weather: true`, which asks the server to
+look that day up in the Open-Meteo public archive by its coordinates and date.
+A day with no coordinates is left alone rather than asked — the server has
+nothing to look up, and asking anyway would claim a certainty nobody has.
+**Never write a reading yourselves**: there is no `weatherData:` this skill
+will ever send, because that is a measurement somebody actually took, and an
+agent does not have one.
+
+This also needs the journal's *own* opt-in, in `content/<user>/config.json`:
+
+```json
+"features": { "weather": { "enabled": true } }
+```
+
+`/api/health`'s capability is only the server's ceiling — whether this
+instance can offer weather at all. Whether *this* journal wants it is a
+separate switch, off by default, and a request sent without it comes back
+`200 OK` and fills in nothing: the server does not tell you why, because
+"capability off" is one of the outcomes it treats as none of the caller's
+business. So `--weather` checks the journal's switch first and says plainly
+what to add if it is missing, rather than sending fourteen requests that look
+like they worked and were not.
 
 ## About publishing, which is the part that matters
 
@@ -156,6 +191,7 @@ Everything the file carries, not the fields anyone remembers:
 | each `entries/*.md` + its prose | `POST …/days` (`content`), or `PATCH` if it is there |
 | `without: [costs]` on a day | `costs: false` — *there was no money on this day* |
 | `gallery:` items whose files are on disk | multipart `POST …/media`, batched under the size limit |
+| `--weather`, on a day with `lat`/`lng` | `weather: true` on that day's write — never a field in the file |
 | — | `POST …/days/<slug>/publish`, unless `--drafts` |
 
 Photographs already in the day's gallery on the instance are not sent again —

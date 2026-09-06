@@ -6,6 +6,18 @@
 //   node publish.mjs --user severin --dry-run       say what it would do
 //   node publish.mjs --user severin --dry-run --offline   … without asking the site
 //   node publish.mjs --user severin --drafts        write the days, do not publish them
+//   node publish.mjs --user severin --weather       ask the archive for every day's weather
+//
+// `--weather` is the one place this repository asks a whole trip a single
+// question rather than fourteen days one at a time — see AGENTS.md. It sends
+// `weather: true` on every day that has `lat`/`lng`, which asks the server to
+// look that day up in the Open-Meteo archive; a day with no coordinates is
+// left alone rather than asked, because the server has nothing to look up
+// and asking anyway would claim a certainty nobody has. It also needs the
+// journal's own `config.json` to have switched `features.weather` on —
+// `/api/health`'s capability is only the server's ceiling, and a request sent
+// under a journal that has not opted in comes back 200 and does nothing, so
+// this checks first and says plainly what to add rather than sending it.
 //
 // It asks nothing. Everything it does is decided by comparing what is on disk
 // with what the instance already has: a trip that is not there is created, a
@@ -37,6 +49,11 @@ const only = arg("trip");
 const dry = has("dry-run");
 const offline = has("offline");
 const draftsOnly = has("drafts");
+// The owner said the word for the whole trip, once — see AGENTS.md's "one
+// rule". Applied to every day that has lat/lng; a day with no coordinates
+// gets nothing rather than a guess, because the server has nothing to look up
+// and asking anyway would claim a certainty nobody has.
+const weather = has("weather");
 
 if (!user) {
   console.error("Which journal? node publish.mjs --user <username>");
@@ -96,6 +113,25 @@ console.log(
   (dry ? ` · dry run, nothing is sent${offline ? " · offline — the photograph counts below are not checked against the site" : ""}` : "") +
   "\n",
 );
+
+// `/api/health`'s capability is the server's ceiling; whether *this* journal
+// has opted in is `config.json`'s own `features.weather.enabled`, and the two
+// are checked separately on purpose. A `PATCH …/days/<slug>` with
+// `weather: true` under a journal that has not opted in comes back 200 and
+// fills in nothing — the server's own refusals never reach this call, so
+// there is no error here to catch and nothing this script can tell apart from
+// success. Sending it anyway would be fourteen requests that look like they
+// worked and were not.
+const weatherOn = journal.config?.features?.weather?.enabled === true;
+if (weather && !weatherOn) {
+  console.log(
+    "--weather was asked for, but this journal has not switched it on: add\n" +
+    '  "weather": { "enabled": true }\n' +
+    "to features in content/" + user + "/config.json, then run this again. Nothing about the " +
+    "weather was sent this run.\n",
+  );
+}
+const sendWeather = weather && weatherOn;
 
 // ── 2. the journal itself ──────────────────────────────────────────────────
 let status = process.env.FERNSCOUT_TOKEN
@@ -373,6 +409,12 @@ for (const trip of journal.trips) {
                        "transportMode", "transportFrom", "transportTo", "travelScene", "test", "translations"]) {
       if (entry.data[key] !== undefined && entry.data[key] !== null) body[key] = entry.data[key];
     }
+    // `weather` never lives in the file — it is an instruction to the
+    // server, not content, which is exactly what `apiOnly` means in
+    // shared/model.mjs — so it is not in the key list above. `--weather`
+    // supplies it here instead, and only for a day the archive can actually
+    // answer: no lat/lng, no request, never a guess standing in for one.
+    if (sendWeather && body.lat !== undefined && body.lng !== undefined) body.weather = true;
     // The two answers that are not values. On disk they are their own lines;
     // over the API they are the field itself, which is what makes them
     // findable — a caller stuck on `costs` reads about `costs`.
@@ -388,8 +430,9 @@ for (const trip of journal.trips) {
     const existing = already.get(`${date}|${entry.data.title}`);
     let slug = existing?.slug ?? null;
 
+    const weatherNote = body.weather ? " + ask the archive for the weather" : "";
     if (!slug) {
-      note(`  ${step(`write ${entry.file}`)}`);
+      note(`  ${step(`write ${entry.file}${weatherNote}`)}`);
       if (dry) slug = entry.slug;
       else {
         const made = await call("POST", `/api/v1/${user}/trips/${trip.id}/days`, {
@@ -400,7 +443,7 @@ for (const trip of journal.trips) {
         note(`      → ${slug}`);
       }
     } else {
-      note(`  ${step(`update ${slug}`)}`);
+      note(`  ${step(`update ${slug}${weatherNote}`)}`);
       if (!dry) {
         const patched = await call("PATCH", `/api/v1/${user}/trips/${trip.id}/days/${slug}`, { body });
         if (!patched.ok) refuse(patched, `PATCH …/days/${slug}`);

@@ -75,6 +75,12 @@ call, `id:` is the folder's name.
 - two files sharing a slug
 - dates inside the trip that have no day at all
 - a budget with no day-level spending anywhere under it
+- a day with `lat`/`lng` and no `weather:` — tipped as an offer to ask the
+  Open-Meteo archive what the day actually was, via `publish --weather`; a day
+  with no coordinates gets no tip, because there is nothing honest to offer it.
+  If the journal has not switched `features.weather` on in `config.json`, the
+  tip says that instead of the archive offer — asking without it is accepted
+  and does nothing
 
 **Drift between these tools and the instance**, in both directions. A field
 the instance accepts that this repository does not offer is a tip; a key these

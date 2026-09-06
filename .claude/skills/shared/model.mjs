@@ -139,7 +139,19 @@ export const MODEL = {
       // The three request-only fields on a day. They are instructions to the
       // server, not content: nothing on disk carries them, and a file that did
       // would be describing a call rather than a day.
-      weather: { apiOnly: true, note: "ask the server to look up what the weather was" },
+      //
+      // `weather` carries `offerable: true` besides `apiOnly` — the one
+      // exception to "apiOnly means the tip loop skips it". It is request-only
+      // exactly like the other four (a file never carries `weather:`, and
+      // `publish.mjs` never reads one from frontmatter), but unlike them it is
+      // a genuine offer to the owner rather than plumbing: `coordinates` and
+      // `photos` are only ever `false`, and `idempotency_key` names a retry.
+      // `weather: true` asks the server to retrieve a real measurement for a
+      // real day, which is exactly the kind of absent-and-actionable option
+      // this file's tips exist to surface. `weatherData` stays plain
+      // `apiOnly` — an agent must never write one from its own knowledge, so
+      // there is nothing here to invite anybody to set.
+      weather: { apiOnly: true, offerable: true, note: "ask the server to look up what the weather was" },
       weatherData: { apiOnly: true, note: "a reading somebody actually took" },
       coordinates: { apiOnly: true, note: "only ever false — this day has no one place" },
       photos: { apiOnly: true, note: "only ever false — this day has no photographs" },

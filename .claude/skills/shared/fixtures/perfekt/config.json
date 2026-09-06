@@ -9,7 +9,7 @@
   "displayCurrencies": ["EUR", "USD"],
   "units": "metric",
   "manualRates": { "VND": 30500 },
-  "features": { "weather": true, "postcards": true },
+  "features": { "weather": { "enabled": true }, "postcards": true },
   "owner": { "name": "Perfekt Owner", "nickname": "Perfekt", "email": "perfekt@example.com" },
   "travellers": [ { "for": "perfekt@example.com", "age": "adult" } ],
   "media": { "imageMaxBytes": 10485760 }
