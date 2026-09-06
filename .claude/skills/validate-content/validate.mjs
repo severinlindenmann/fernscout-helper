@@ -187,6 +187,79 @@ function checkList(where, schema, value) {
   value.forEach((item, index) => checkObject(`${where}[${index}]`, items, item));
 }
 
+/**
+ * The two capabilities `app/api/v1/{user}/config`'s `view()` (in the
+ * fernscout repo) never reads from a journal's own `features` at all:
+ *
+ *   features[name] = name === "logging" || name === "credits"
+ *     ? serverOnly[name].enabled     // resolveCapabilities() — the operator's
+ *     : user.features[name].enabled; // the journal's own opt-in
+ *
+ * with the comment there reading "`logging` and `credits` are never a
+ * journal's own opt-in". `lib/config.ts`'s `DEFAULT_FEATURES` says the same
+ * at length for both: `logging` is server-only by design (B257), and
+ * `credits` decides whether a send is charged to the *operator's* card and is
+ * "never asked with a username". Nothing published lists this — `/api/health`
+ * answers the same shape for these two as for any other capability, so there
+ * is no live signal to check against the way `CAPABILITY_NAMES` is for
+ * unknown names. This is a named constant pointing at that one function,
+ * accepted as the honest alternative to inventing a published source that
+ * does not exist.
+ */
+const SERVER_ONLY_FEATURES = ["logging", "credits"];
+
+/**
+ * `config.json`'s `features` block, checked against the shape the server's
+ * own `parseFeatures` (lib/config.ts) accepts — not just the keys, but what
+ * sits under each one.
+ *
+ * `{ "postcards": true }` reads as an obvious shorthand for "on", and is
+ * exactly what the instance refuses: it wants `{ "enabled": true }`, pushes a
+ * `problems` entry, and falls back to the capability's default — off, for
+ * everything optional. Nothing on disk says so unless this does; `checkKeys`
+ * only ever looked at the top-level keys of `config.json`; it never opened
+ * the object living under `features` to see what was inside.
+ *
+ * Names are checked against `CAPABILITY_NAMES`, the live list from
+ * `/api/health`'s `capabilities` — the same list `parseFeatures`'s trailing
+ * loop rejects an unknown key against. When that list could not be had
+ * (offline, or the network failed and there is no cache) it is empty, and the
+ * name check is skipped entirely: a validator with no list to check against
+ * must not invent one, or every capability in a perfectly good journal would
+ * come back "unknown".
+ *
+ * `logging` and `credits` are a warning, not an error, and deliberately not
+ * the same mark as the bare boolean: the instance does not refuse either one
+ * — `parseFeatures` accepts the shape fine — and nothing downstream breaks.
+ * What is wrong is quieter: the value is parsed, stored, and never once
+ * *read* back for either name, so an owner who sets `"credits": { "enabled":
+ * true }` believing it does something has been misled, not refused. That is
+ * "accepted and probably not what anybody meant" — this file's own
+ * definition of `warn` — rather than "the instance will refuse this".
+ */
+function checkFeatures(where, features) {
+  if (typeOf(features) !== "object") return;
+  for (const [name, value] of Object.entries(features)) {
+    if (CAPABILITY_NAMES.length && !CAPABILITY_NAMES.includes(name)) {
+      const near = suggest(name, CAPABILITY_NAMES);
+      error(where, `features.${name} is not a known capability`,
+        near ? `did you mean ${near}?` : `the instance offers: ${CAPABILITY_NAMES.join(", ")}`);
+      continue;
+    }
+    if (typeOf(value) !== "object") {
+      error(where, `features.${name} is ${typeOf(value)}`, `must be an object like { "enabled": ${JSON.stringify(value)} }`);
+      continue;
+    }
+    if (typeof value.enabled !== "boolean") {
+      error(where, `features.${name}.enabled is ${JSON.stringify(value.enabled)}`, "must be true or false");
+    }
+    if (SERVER_ONLY_FEATURES.includes(name)) {
+      warn(where, `features.${name} is the operator's to set, not the journal's`,
+        "this value is parsed and stored, but never read back for this capability — it does nothing here");
+    }
+  }
+}
+
 /** Cost lines, wherever they appear. */
 function checkCosts(where, list) {
   if (!Array.isArray(list)) return;
@@ -214,6 +287,7 @@ function checkJournal(user, only) {
   else {
     checkKeys(where, MODEL["config.json"].keys, journal.config, { scope: "journal" });
     const features = journal.config.features ?? {};
+    checkFeatures(where, features);
     const off = Object.entries(features).filter(([, v]) => v && v.enabled === false).map(([k]) => k);
     if (off.length) tip(where, `features off: ${off.join(", ")}`, "each can be switched on with PATCH /api/v1/{user}/config");
   }
@@ -449,6 +523,13 @@ let LIMITS = {};
 // A journal's `config.json` still has to opt in on top of this (checked per
 // entry, below); this is only "can this instance ever say yes at all".
 let WEATHER_CAPABLE = false;
+// The live list of capability names — `/api/health`'s `capabilities` keys,
+// the same set `parseFeatures`'s trailing loop in lib/config.ts checks an
+// unknown `features` key against. Empty when the document could not be had
+// at all (offline with no cache, or an unreachable instance and no cache
+// either): `checkFeatures` skips the unknown-name check rather than invent a
+// list of its own to check against.
+let CAPABILITY_NAMES = [];
 
 try {
   const { doc, from, site } = await openapi({ offline: has("offline"), refresh: has("refresh") });
@@ -473,6 +554,7 @@ try {
     const reported = await health({ offline: has("offline"), refresh: has("refresh") });
     LIMITS = reported.doc?.media ?? {};
     WEATHER_CAPABLE = reported.doc?.capabilities?.weather?.enabled === true;
+    CAPABILITY_NAMES = Object.keys(reported.doc?.capabilities ?? {});
     // `api.mjs` already refetches a cache with no `media` block on any normal
     // (online) run, so this only fires with `--offline` or when the network
     // is down and the fetch fell back to that same stale copy — the cases
