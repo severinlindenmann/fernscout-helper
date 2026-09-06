@@ -242,6 +242,23 @@ export function interpretManifest(doc) {
           break;
         case "never-over-api":
           local.fileOnly = true;
+          // A fileOnly key can never appear in any request schema, by
+          // definition — it never crosses the API at all — so `ruleFor()`'s
+          // `published.description` fallback in validate.mjs (the live
+          // schema's own wording, preferred everywhere it exists: see that
+          // function's "the document's own wording is better than anything
+          // written here") never has anything to offer one. The document's
+          // own `because` is the only prose that will ever exist for a key
+          // like this, and B620 put it there for exactly the two that had
+          // none anywhere else (`cover`, `travellers`) — so this is where the
+          // client reads it in as the key's tip, rather than the tip staying
+          // hand-copied into `model.mjs` and nowhere else. Every other assert
+          // kind is left alone: `local.note` already carries the same
+          // `because` (below) for a required-but-missing error, and a key
+          // that DOES cross the API keeps deferring to the live description,
+          // which is more likely to be current than a `because` written once
+          // and never revisited.
+          if (rule.because) local.tip = rule.because;
           break;
         case "shape":
         case "known-key":
