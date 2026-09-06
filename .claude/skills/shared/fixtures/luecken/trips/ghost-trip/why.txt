@@ -1,0 +1,1 @@
+This trip deliberately has no trip.md, so the validator has to say so rather than silently skipping the folder.

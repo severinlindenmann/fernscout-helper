@@ -1,0 +1,6 @@
+{
+  "title": "Halbfertig Journal",
+  "owner": { "name": "Halbfertig Owner", "nickname": "Halbfertig", "email": "halbfertig@example.com" },
+  "defaultLocale": "en",
+  "locales": ["en"]
+}

@@ -1,0 +1,6 @@
+{
+  "title": "Lücken Journal",
+  "defaultLocale": "de",
+  "locales": ["de", "en"],
+  "sparkles": true
+}

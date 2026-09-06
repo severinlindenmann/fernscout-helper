@@ -4,9 +4,9 @@
 //   node .claude/skills/shared/selftest.mjs
 //   FERNSCOUT_URL=http://127.0.0.1:3311 node .claude/skills/shared/selftest.mjs
 //
-// Runs the three test journals under `content/` through `validate-content` and
-// checks each one says what it is supposed to say. It is a regression test for
-// the *tools*, not for anybody's journal.
+// Runs the three test journals under `.claude/skills/shared/fixtures/`
+// through `validate-content` and checks each one says what it is supposed to
+// say. It is a regression test for the *tools*, not for anybody's journal.
 //
 // It exists because of a drift that happened exactly once and would have
 // happened again. The server gained a third answer for a day whose costs
@@ -22,10 +22,24 @@
 // incomplete is not wrong. `luecken` has one planted fault of each kind and
 // must come back with all of them — a validator that stops noticing is the
 // other way this rots.
+//
+// The fixtures live beside this script rather than under `content/`, because
+// `content/` is gitignored — correctly, it is where somebody's own
+// photographs go — and a fixture that only exists on the machine that wrote
+// it is not a regression test, it is a folder. `FERNSCOUT_CONTENT_DIR` below
+// is the one thing that points `validate.mjs` at the fixtures instead;
+// nothing else ever sets it, so a real run against `content/` is unaffected.
+//
+// A fixture that has gone missing is a broken test, not a skipped one: it
+// used to print "not here, skipped" and exit 0, which is exactly how this
+// self-test could stop testing anything and nobody would notice. Now it is a
+// hard failure, loud and non-zero.
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { ROOT } from "./lib.mjs";
+
+const FIXTURES = join(ROOT, ".claude/skills/shared/fixtures");
 
 /** What each fixture is for, and what it must say. `errors` is a floor: a new
  * check that finds something genuinely wrong in `luecken` is welcome, and one
@@ -39,15 +53,21 @@ const EXPECTED = [
 const validate = join(ROOT, ".claude/skills/validate-content/validate.mjs");
 
 let failed = 0;
+let missing = 0;
 for (const fixture of EXPECTED) {
-  if (!existsSync(join(ROOT, "content", fixture.user))) {
-    console.log(`— ${fixture.user}: not here, skipped`);
+  if (!existsSync(join(FIXTURES, fixture.user))) {
+    // Absent must fail loudly. It used to print "not here, skipped" and exit
+    // 0 — indistinguishable from every fixture passing — which is the whole
+    // bug this file exists to fix.
+    console.log(`✗ ${fixture.user}: missing — expected a fixture at ${join(FIXTURES, fixture.user)}`);
+    missing += 1;
     continue;
   }
   let report;
   try {
     report = execFileSync(process.execPath, [validate, "--user", fixture.user, "--json"], {
       encoding: "utf8",
+      env: { ...process.env, FERNSCOUT_CONTENT_DIR: FIXTURES },
     });
   } catch (refused) {
     // The validator exits non-zero when it finds errors, which is most of the
@@ -74,6 +94,12 @@ for (const fixture of EXPECTED) {
   if (!ok) failed += 1;
 }
 
+if (missing > 0) {
+  console.log(
+    `\n${missing} fixture${missing === 1 ? "" : "s"} missing — this self-test proved nothing for ${missing === 1 ? "it" : "them"}.\n` +
+    `Fixtures live at ${FIXTURES}; restore ${missing === 1 ? "it" : "them"} from git rather than skipping the run.`,
+  );
+}
 if (failed > 0) {
   console.log(
     `\n${failed} fixture${failed === 1 ? "" : "s"} did not say what it should.\n` +
@@ -82,4 +108,4 @@ if (failed > 0) {
     "and if it calls a real field unknown, the fix is in shared/model.mjs.",
   );
 }
-process.exit(failed > 0 ? 1 : 0);
+process.exit(failed > 0 || missing > 0 ? 1 : 0);
