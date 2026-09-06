@@ -5,11 +5,19 @@
 // with it and `publish.mjs` sends it. Two readers would have drifted; this is
 // the one.
 import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { ROOT } from "./lib.mjs";
 import { parseFrontmatter } from "./frontmatter.mjs";
 
-export const CONTENT = join(ROOT, "content");
+// `content/` is where a real person's journal lives, and it is gitignored —
+// correctly, since it is somebody's photographs. `selftest.mjs` needs fixture
+// journals that DO travel with the repository, so it points this at
+// `.claude/skills/shared/fixtures/` instead by setting this one variable
+// before it shells out to `validate.mjs`. Nothing else ever sets it, so a real
+// run against `content/` is unaffected.
+export const CONTENT = process.env.FERNSCOUT_CONTENT_DIR
+  ? resolve(process.env.FERNSCOUT_CONTENT_DIR)
+  : join(ROOT, "content");
 
 export function usernames() {
   if (!existsSync(CONTENT)) return [];

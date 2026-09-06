@@ -73,6 +73,9 @@ there is any doubt about whether they meant the website or just the file.
                              frontmatter.mjs (reading YAML) · model.mjs (every option
                              there is) · journal.mjs (a folder, parsed) · api.mjs
                              selftest.mjs (do these tools still agree with the site?)
+.claude/skills/shared/fixtures/  the three test journals selftest.mjs runs —
+                             committed, unlike content/, because a fixture nobody
+                             can clone is not a test
 import/<source>/             gitignored — statements and exports, exactly as they arrived
 export/<trip>/               gitignored — working files: photos, review.json, notes.md, costs.json
 content/<user>/trips/<trip>/ gitignored — the journal itself
@@ -100,9 +103,12 @@ correctly and had simply not been told.
 node .claude/skills/shared/selftest.mjs
 ```
 
-Three test journals under `content/` — one with every option set, one valid
-and incomplete, one with a planted fault of each kind — run through the
-validator, each checked against what it should say. **Run it after the site is
+Three test journals under `.claude/skills/shared/fixtures/` — one with every
+option set, one valid and incomplete, one with a planted fault of each kind —
+run through the validator, each checked against what it should say. They live
+there and not under `content/` because `content/` is gitignored — correctly,
+it is where somebody's own photographs go — and a fixture that only exists on
+the machine that wrote it is not a regression test. **Run it after the site is
 deployed with anything new**, and when a validation message looks wrong.
 
 If it reports a real field as unknown, the fix is in `shared/model.mjs`. If it
