@@ -20,6 +20,8 @@ sends nothing.
 
 ```
 --user <username>     which journal. Required
+--email <address>     create the journal too, if it is not there yet
+--code <six digits>   the code that address was mailed
 --trip <id>           just one trip
 --dry-run             print every call it would make, send none
 --drafts              write and upload, but do not put anything on the site
@@ -47,10 +49,20 @@ journal on a website is worse than none, and the errors are cheap to read
 first. `--skip-validate` exists and is almost never the right answer; if you
 reach for it, say out loud what you are overriding.
 
-**It cannot create the journal itself.** A new journal needs an address
-somebody owns, and a six-digit code goes to it — a script cannot read your
-mail. If the journal is not there, it prints the two `curl` calls that make
-one and stops.
+**It cannot create the journal without one question.** A new journal is bound
+to an address somebody owns, and a six-digit code goes to that address; no
+script can read their mail. So it is two runs and exactly one question:
+
+```bash
+node publish.mjs --user them --email them@example.com            # asks for the code
+node publish.mjs --user them --email them@example.com --code 123456
+```
+
+The second run creates the journal from `config.json`, then does the whole
+publish in the same breath — trip, days, photographs, on the site. It prints a
+**sign-in link for the person** (once, fifteen minutes) and the journal's own
+seven-day token. Hand over the sign-in link in your reply, immediately; do not
+write the token into a file in this repository.
 
 ## About publishing, which is the part that matters
 
@@ -79,14 +91,21 @@ Seven days, from a six-digit code that goes to the journal owner's address:
 ```bash
 curl -s -X POST https://fernscout.ch/api/auth/request \
   -H 'content-type: application/json' \
-  -d '{"user":"<username>","email":"<the owner address>"}'
+  -d '{"user":"<username>","email":"<the owner address>","kind":"agent"}'
 
 curl -s -X POST https://fernscout.ch/api/auth/verify \
   -H 'content-type: application/json' \
-  -d '{"user":"<username>","email":"<the owner address>","code":"123456"}'
+  -d '{"user":"<username>","email":"<the owner address>","code":"123456","kind":"agent"}'
 
 export FERNSCOUT_TOKEN=…
 ```
+
+**`"kind":"agent"` on both calls, and it is the mistake to watch for.** Without
+it the default is `guest`: the second call still answers `200 OK`, with
+`{"ok":true,"expires":…,"scope":"read"}` and **no token in it** — the
+credential went into a cookie a script does not have. Nothing about that
+response says you asked for the wrong thing. This skill's own instructions had
+it wrong until it was tested end to end.
 
 The owner can also hand over a token from their own page on the site — see
 `https://fernscout.ch/agent.md`, "handover". Either way the token is theirs:

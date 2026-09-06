@@ -19,15 +19,23 @@
 import { existsSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import { arg, has } from "../shared/lib.mjs";
-import { COST_KEYS, GALLERY_KEYS, MEDIA_FORMATS, MODEL, crosscheck } from "../shared/model.mjs";
+import { COST_KEYS, GALLERY_KEYS, MODEL, crosscheck } from "../shared/model.mjs";
 import { galleryFile, readJournal, usernames } from "../shared/journal.mjs";
-import { openapi } from "../shared/api.mjs";
+import { deref, health, openapi, requestSchema } from "../shared/api.mjs";
 
 const found = [];
-const say = (severity, where, message, fix) => found.push({ severity, where, message, fix });
+const say = (severity, where, message, fix, key) => found.push({ severity, where, message, fix, key });
+
+/**
+ * Fields already reported as an error in a given file, so the tip for the same
+ * field is not printed beside it. "costs is not set" under "the trip tracks
+ * costs and this day says nothing about it" is the same sentence twice, and
+ * the second one makes the first look like advice rather than a refusal.
+ */
+const errored = new Set();
 const error = (w, m, f) => say("error", w, m, f);
 const warn = (w, m, f) => say("warn", w, m, f);
-const tip = (w, m, f) => say("tip", w, m, f);
+const tip = (w, m, f, key) => say("tip", w, m, f, key);
 
 /** The key somebody probably meant. Case and separators first, then one or
  * two edits — enough for `visibilty` and `transport_mode`, not enough to pair
@@ -57,10 +65,47 @@ function suggest(key, known) {
 
 const typeOf = (value) => (Array.isArray(value) ? "array" : value === null ? "null" : typeof value);
 
+/**
+ * What the instance says a field may be, merged over what this repository
+ * knows about the file.
+ *
+ * The instance wins on type, enum and required, always — it is the thing that
+ * will refuse the write, and a second opinion here is only ever a second
+ * opinion that can be wrong. What this repository adds is the half a request
+ * schema has no way to carry: what the field is FOR (the tip), and the rules
+ * for the keys that never cross the API at all.
+ */
+let API = { trip: {}, day: {}, journal: {}, cost: {}, gallery: {} };
+
+function ruleFor(scope, key, local = {}) {
+  const published = API[scope]?.properties?.[key];
+  if (!published) return local;
+  return {
+    ...local,
+    type: published.type ?? local.type,
+    enum: published.enum ?? local.enum,
+    required: (API[scope]?.required ?? []).includes(key) || local.required,
+    // The document's own wording is better than anything written here: it is
+    // what the person who wrote the refusal chose to say.
+    tip: local.tip ?? published.description,
+    expected: local.expected,
+  };
+}
+
 /** One value against one key's rule. */
 function checkValue(where, key, rule, value) {
-  if (rule.type && typeOf(value) !== rule.type) {
-    error(where, `${key} is ${typeOf(value)}, expected ${rule.type}`, rule.expected);
+  // `type` may be a list — the document writes `["array", "boolean"]` for a
+  // field a day may either answer or decline.
+  const types = rule.type === undefined ? null : [rule.type].flat();
+  // JSON has one number type and JSON Schema has two. A width of 1600 read out
+  // of a file is a `number`, and the document calls it an `integer`; treating
+  // that as a mismatch made every photograph in a real journal an error.
+  const actual = typeOf(value);
+  const matches = types?.some(
+    (type) => type === actual || (type === "integer" && Number.isInteger(value)),
+  );
+  if (types && !matches) {
+    error(where, `${key} is ${typeOf(value)}, expected ${types.join(" or ")}`, rule.expected);
     return;
   }
   if (rule.enum && !rule.enum.includes(value)) {
@@ -73,14 +118,19 @@ function checkValue(where, key, rule, value) {
 }
 
 /** A whole frontmatter block against a MODEL file. */
-function checkKeys(where, keys, data, { tips = true } = {}) {
+function checkKeys(where, keys, data, { tips = true, scope = null } = {}) {
   const known = Object.keys(keys);
-  for (const [key, rule] of Object.entries(keys)) {
-    if (rule.apiOnly) continue;
+  for (const [key, local] of Object.entries(keys)) {
+    if (local.apiOnly) continue;
+    const rule = scope ? ruleFor(scope, key, local) : local;
     const value = data[key];
     if (value === undefined || value === null) {
-      if (rule.required && !rule.body) error(where, `${key} is missing`, rule.note ?? `required — ${rule.type}`);
-      else if (rule.tip && tips) tip(where, `${key} is not set`, rule.tip);
+      // `body: true` is the prose under the frontmatter, checked separately —
+      // it is not a key anybody forgot to write. `noTip` is for the fields it
+      // would be wrong to suggest: nobody should be nudged towards `test`.
+      if (local.body || local.noTip) continue;
+      if (rule.required) error(where, `${key} is missing`, rule.note ?? `required — ${rule.type}`);
+      else if (rule.tip && tips) tip(where, `${key} is not set`, rule.tip, key);
       continue;
     }
     checkValue(where, key, rule, value);
@@ -98,7 +148,7 @@ function checkCosts(where, list) {
   list.forEach((line, index) => {
     const at = `${where} costs[${index}]`;
     if (typeOf(line) !== "object") { error(at, `is ${typeOf(line)}`, "a { label, amount } line"); return; }
-    checkKeys(at, COST_KEYS, line, { tips: false });
+    checkKeys(at, Object.fromEntries(COST_KEYS.map((k) => [k, {}])), line, { tips: false, scope: "cost" });
   });
 }
 
@@ -117,7 +167,7 @@ function checkJournal(user, only) {
   if (journal.configProblem) error(where, "is not valid JSON", journal.configProblem);
   else if (!journal.config) error(`content/${user}`, "has no config.json", "the journal's title, owner and languages live there");
   else {
-    checkKeys(where, MODEL["config.json"].keys, journal.config);
+    checkKeys(where, MODEL["config.json"].keys, journal.config, { scope: "journal" });
     const features = journal.config.features ?? {};
     const off = Object.entries(features).filter(([, v]) => v && v.enabled === false).map(([k]) => k);
     if (off.length) tip(where, `features off: ${off.join(", ")}`, "each can be switched on with PATCH /api/v1/{user}/config");
@@ -131,7 +181,7 @@ function checkJournal(user, only) {
 
     if (!trip.trip) { error(tripWhere, "is missing", "a trip without trip.md is not a trip"); continue; }
     for (const p of trip.trip.problems) error(tripWhere, `line ${p.line}: ${p.why}`, p.text);
-    checkKeys(tripWhere, MODEL["trip.md"].keys, trip.trip.data);
+    checkKeys(tripWhere, MODEL["trip.md"].keys, trip.trip.data, { scope: "trip" });
 
     const data = trip.trip.data;
     if (data.id && data.id !== trip.id) error(tripWhere, `id is ${JSON.stringify(data.id)} but the folder is ${trip.id}`, "they must match");
@@ -161,12 +211,21 @@ function checkJournal(user, only) {
     const slugs = new Map();
     let daysWithCosts = 0;
     const covered = new Set();
+    // Absent means every track on, which is the instance's default and the one
+    // an owner should not have to find.
+    const tracks = { costs: true, coordinates: true, photos: true, ...(data.tracks ?? {}) };
 
     for (const entry of trip.entries) {
       const entryWhere = `content/${user}/trips/${trip.id}/entries/${entry.file}`;
       for (const p of entry.problems) error(entryWhere, `line ${p.line}: ${p.why}`, p.text);
 
-      checkKeys(entryWhere, MODEL["entries/YYYY-MM-DD-slug.md"].keys, entry.data);
+      // A day that says `without: [costs]` has answered the question. Tipping
+      // it to add costs would be asking again, and asking again is how an
+      // agent ends up inventing an amount to make a list go quiet.
+      for (const declinedTrack of [entry.data.without ?? []].flat()) {
+        errored.add(`${entryWhere}|${declinedTrack === "coordinates" ? "lat" : declinedTrack}`);
+      }
+      checkKeys(entryWhere, MODEL["entries/YYYY-MM-DD-slug.md"].keys, entry.data, { scope: "day" });
       if (!entry.body) error(entryWhere, "has no prose", "the body under the frontmatter is the day itself");
 
       if (!entry.fileDate) error(entryWhere, "is not named YYYY-MM-DD-slug.md", "the date orders it and the slug addresses it");
@@ -187,8 +246,34 @@ function checkJournal(user, only) {
       if (Array.isArray(entry.data.costs) && entry.data.costs.length) daysWithCosts += 1;
       checkCosts(entryWhere, entry.data.costs);
 
+      // The trip's own contract — `tracks:` on trip.md, absent meaning all of
+      // them on. The instance answers 422 `incomplete_day` for a day that says
+      // nothing about something the trip keeps track of, and names both how to
+      // send it and how to decline it. Checked here so that is found before a
+      // publish run rather than in the middle of one.
+      const declined = new Set([entry.data.without ?? []].flat());
+      for (const [track, answered] of [
+        ["costs", Array.isArray(entry.data.costs) && entry.data.costs.length > 0],
+        ["coordinates", entry.data.lat !== undefined && entry.data.lng !== undefined],
+        ["photos", Array.isArray(entry.data.gallery) && entry.data.gallery.length > 0],
+      ]) {
+        if (tracks[track] === false || answered || declined.has(track)) continue;
+        errored.add(`${entryWhere}|${track === "coordinates" ? "lat" : track}`);
+        error(entryWhere, `the trip tracks ${track} and this day says nothing about it`,
+          `send it, or say there was none — \`"${track}": false\` on the write, which is ` +
+          `written into the day as \`without: [${track}]\`. Ask the person; never invent one`);
+      }
+
+      // An error and not a warning: the instance refuses this day outright
+      // (400 invalid_entry). The boundary between the two marks is exactly
+      // "will this be refused", and this one used to sit on the wrong side —
+      // a publish run got fourteen days in before finding out.
       if (locales.length > 1 && !entry.data.translations) {
-        warn(entryWhere, `the journal is written in ${locales.join(", ")} and this day has no translations`, "send them, or write the journal in one language");
+        errored.add(`${entryWhere}|translations`);
+        error(entryWhere,
+          `the journal declares ${locales.join(", ")} and this day has no translations`,
+          "send them — or, if the journal is really written in one language, that is the " +
+          "journal's to fix: narrow locales in config.json");
       }
 
       const gallery = entry.data.gallery;
@@ -198,17 +283,32 @@ function checkJournal(user, only) {
         gallery.forEach((item, index) => {
           const at = `${entryWhere} gallery[${index}]`;
           if (typeOf(item) !== "object") { error(at, `is ${typeOf(item)}`, "a { src, type } item"); return; }
-          checkKeys(at, GALLERY_KEYS, item, { tips: false });
+          checkKeys(at, Object.fromEntries(GALLERY_KEYS.map((k) => [k, {}])), item, {
+            tips: false,
+            scope: "gallery",
+          });
           const file = galleryFile(journal, trip, item.src);
           if (!file) error(at, `src ${JSON.stringify(item.src)} is not a /media/<trip>/<day>/<file> path`);
           else if (!existsSync(file)) error(at, `${item.src} is not on disk`, `looked for ${file.replace(journal.dir, `content/${user}`)}`);
           else {
             const extension = basename(file).split(".").pop().toLowerCase();
-            const allowed = MEDIA_FORMATS[item.type] ?? [];
+            // The instance's own list, from /api/health. `.jpg` is the trap:
+            // it is the commonest extension there is and the server names the
+            // format `jpeg`, so the two have to be reconciled here rather than
+            // by keeping a second list.
+            const allowed = (LIMITS[item.type === "video" ? "videoFormats" : "imageFormats"] ?? []).map(
+              (format) => (format === "jpeg" ? ["jpeg", "jpg"] : [format]),
+            ).flat();
             if (allowed.length && !allowed.includes(extension)) {
               error(at, `.${extension} is not a ${item.type} format this instance takes`, `one of ${allowed.join(", ")}`);
             }
-            if (statSync(file).size === 0) error(at, `${item.src} is an empty file`);
+            const bytes = statSync(file).size;
+            const ceiling = item.type === "video" ? LIMITS.videoMaxBytes : LIMITS.imageMaxBytes;
+            if (bytes === 0) error(at, `${item.src} is an empty file`);
+            else if (ceiling && bytes > ceiling) {
+              error(at, `${item.src} is ${Math.round(bytes / 1024 / 1024)} MB`,
+                `this instance takes at most ${Math.round(ceiling / 1024 / 1024)} MB per file`);
+            }
           }
           if (item.type === "image" && (!item.width || !item.height)) {
             warn(at, "has no width and height", "the page reserves no space for it, so the layout jumps as it loads");
@@ -244,8 +344,40 @@ if (users.length === 0) {
   process.exit(1);
 }
 
+let LIMITS = {};
+
 try {
   const { doc, from, site } = await openapi({ offline: has("offline"), refresh: has("refresh") });
+
+  // Everything the instance is willing to say about itself, read once. From
+  // here on this script has no opinion of its own about what a field may be.
+  API = {
+    trip: requestSchema(doc, "/api/v1/{user}/trips", "post") ?? {},
+    day: requestSchema(doc, "/api/v1/{user}/trips/{trip}/days", "post") ?? {},
+    journal: {
+      properties: {
+        ...(requestSchema(doc, "/api/v1/journals", "post")?.properties ?? {}),
+        ...(requestSchema(doc, "/api/v1/{user}/config", "patch")?.properties ?? {}),
+      },
+    },
+    cost: deref({ $ref: "#/components/schemas/Cost" }, doc) ?? {},
+    gallery: deref({ $ref: "#/components/schemas/GalleryItem" }, doc) ?? {},
+  };
+
+  try {
+    const reported = await health({ offline: has("offline") });
+    LIMITS = reported.doc?.media ?? {};
+    const off = Object.entries(reported.doc?.capabilities ?? {})
+      .filter(([, state]) => !state.enabled)
+      .map(([name, state]) => `${name} (${state.reason ?? "off"})`);
+    if (off.length && !has("json")) {
+      console.log(`This server cannot offer: ${off.join(", ")}\n`);
+    }
+  } catch (failure) {
+    warn("(health)", failure.message,
+      "the upload formats and size limits were not checked — /api/health is where they live");
+  }
+
   if (!has("json")) console.log(`Checked against ${site} — schema from ${from}\n`);
   for (const drift of crosscheck(doc)) {
     const unknownHere = drift.why.startsWith("the instance accepts");
@@ -261,6 +393,16 @@ try {
 for (const user of users) {
   try { checkJournal(user, only); }
   catch (failure) { error(`content/${user}`, failure.message); }
+}
+
+// A field that produced an error does not also get a tip: "costs is not set"
+// printed under "the trip tracks costs and this day says nothing about it" is
+// the same sentence twice, and the second makes the first read as advice.
+for (let i = found.length - 1; i >= 0; i -= 1) {
+  const item = found[i];
+  if (item.severity === "tip" && item.key && errored.has(`${item.where}|${item.key}`)) {
+    found.splice(i, 1);
+  }
 }
 
 const counts = { error: 0, warn: 0, tip: 0 };

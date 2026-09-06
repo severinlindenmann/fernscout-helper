@@ -20,7 +20,7 @@ import { readFileSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { arg, has } from "../shared/lib.mjs";
-import { SITE, call, refusal, token } from "../shared/api.mjs";
+import { SITE, call, health, refusal, token } from "../shared/api.mjs";
 import { galleryFile, readJournal } from "../shared/journal.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -62,27 +62,156 @@ if (!has("skip-validate")) {
   }
 }
 
-// Fail here, with the instructions, rather than half-way through a journal.
-try { token(); } catch (missing) { console.error(missing.message); process.exit(1); }
+/**
+ * Fail here, with the instructions, rather than half-way through a journal.
+ *
+ * Unless a journal is being created: that path starts from an address and a
+ * mailed code and ends holding a token of its own, so demanding one first
+ * would be asking for the thing this run is about to produce.
+ */
+const creating = Boolean(arg("email"));
+if (!creating) {
+  try { token(); } catch (missing) { console.error(missing.message); process.exit(1); }
+}
+
+/** What this server will take in an upload — its answer, not a guess here. */
+let LIMITS = {};
+try { LIMITS = (await health()).doc?.media ?? {}; } catch { LIMITS = {}; }
 const journal = readJournal(user);
 console.log(`${SITE} · content/${user}${dry ? " · dry run, nothing is sent" : ""}\n`);
 
 // ── 2. the journal itself ──────────────────────────────────────────────────
-const status = await call("GET", `/api/v1/${user}/status`);
-if (status.status === 404) {
-  console.error(
-    `There is no journal called "${user}" on ${SITE}, and creating one needs an address you own —\n` +
-    "a six-digit code goes to it, and a script cannot read your mail. Two calls:\n\n" +
-    `  curl -s -X POST ${SITE}/api/auth/signup/request -H 'content-type: application/json' \\\n` +
-    `       -d '{"username":"${user}","email":"<your address>"}'\n` +
-    `  curl -s -X POST ${SITE}/api/auth/signup/verify -H 'content-type: application/json' \\\n` +
-    `       -d '{"username":"${user}","email":"<your address>","code":"123456"}'\n\n` +
-    "then POST /api/v1/journals with the token that comes back, and run this again.",
+let status = process.env.FERNSCOUT_TOKEN
+  ? await call("GET", `/api/v1/${user}/status`)
+  : { ok: false, status: 404, body: null };
+
+/**
+ * The journal itself, when there is not one yet.
+ *
+ * This is the one step that cannot be silent, and the reason is not a design
+ * choice here: a new journal is bound to an address somebody owns, and the
+ * server mails a six-digit code to it. No script can read their mail.
+ *
+ * So it is two runs and exactly one question, which is as close to "just
+ * publish" as the address check allows:
+ *
+ *   node publish.mjs --user u --email you@example.com     asks for the code
+ *   node publish.mjs --user u --email you@example.com --code 123456
+ *
+ * Everything after that — the trip, the days, the photographs, the publishing
+ * — happens in the same run without asking anything.
+ */
+if (status.status === 404 || status.status === 401) {
+  const email = arg("email");
+  const code = arg("code");
+  if (!email) {
+    console.error(
+      `There is no journal called "${user}" on ${SITE} yet.\n\n` +
+      "Creating one needs an address you own — a six-digit code goes to it, and no script\n" +
+      "can read your mail. Run this again with the address:\n\n" +
+      `  node publish.mjs --user ${user} --email <your address>\n\n` +
+      "then once more with the code it sends you.",
+    );
+    process.exit(1);
+  }
+  if (!code) {
+    const asked = await call("POST", "/api/auth/signup/request", {
+      auth: false,
+      body: { username: user, email },
+    });
+    if (!asked.ok) refuse(asked, "POST /api/auth/signup/request");
+    console.log(
+      `A six-digit code is on its way to ${email}. It works for 30 minutes.\n` +
+      "When you have it, run:\n\n" +
+      `  node publish.mjs --user ${user} --email ${email} --code <the six digits>\n`,
+    );
+    process.exit(0);
+  }
+
+  const verified = await call("POST", "/api/auth/signup/verify", {
+    auth: false,
+    body: { username: user, email, code },
+  });
+  if (!verified.ok) refuse(verified, "POST /api/auth/signup/verify");
+
+  // config.json is the whole description of the journal, so the create call is
+  // built from it rather than from anything asked for here.
+  const c = journal.config ?? {};
+  const made = await call("POST", "/api/v1/journals", {
+    headers: { authorization: `Bearer ${verified.body.token}` },
+    auth: false,
+    body: {
+      username: user,
+      title: c.title ?? user,
+      ...(c.tagline ? { tagline: c.tagline } : {}),
+      ownerName: c.owner?.name ?? "",
+      ownerNickname: c.owner?.nickname ?? c.owner?.name ?? "",
+      visibility: c.visibility ?? "public",
+      defaultLocale: c.defaultLocale ?? "en",
+      locales: c.locales ?? [c.defaultLocale ?? "en"],
+      ...(c.baseCurrency ? { baseCurrency: c.baseCurrency } : {}),
+      ...(c.displayCurrencies ? { displayCurrencies: c.displayCurrencies } : {}),
+      ...(c.units ? { units: c.units } : {}),
+      ...(c.startLocation ? { startLocation: c.startLocation } : {}),
+    },
+  });
+  if (!made.ok) refuse(made, "POST /api/v1/journals");
+  note(`created the journal ${user}`);
+  console.log(
+    `\n  Give this to ${c.owner?.name ?? "them"}, now, in your reply — it signs them in once,\n` +
+    `  for 15 minutes, so they can see their own drafts:\n\n      ${made.body.signIn}\n\n` +
+    `  And this is the journal's agent token, good for seven days. Keep it out of any file\n` +
+    `  in this repository:\n\n      export FERNSCOUT_TOKEN=${made.body.token}\n`,
   );
-  process.exit(1);
+  process.env.FERNSCOUT_TOKEN = made.body.token;
+  status = await call("GET", `/api/v1/${user}/status`);
 }
+
 if (!status.ok) refuse(status, `GET /api/v1/${user}/status`);
 note(`journal ${user} exists — ${status.body?.trips?.length ?? "?"} trips already there`);
+
+/**
+ * The journal's own settings, from config.json.
+ *
+ * Missed entirely until this was tested end to end: the folder is where a
+ * person defines their journal, and the title, the languages and the
+ * currencies in it were never sent anywhere. A trip would be created inside a
+ * journal still called whatever the signup called it.
+ *
+ * Two calls, because the server refuses a body naming `features` alongside a
+ * profile field — deliberately, so "turn mail off" cannot also rename the
+ * journal by accident.
+ */
+if (journal.config) {
+  const profile = {};
+  for (const key of ["title", "tagline", "visibility", "startLocation", "units",
+                     "locales", "defaultLocale", "displayCurrencies", "manualRates"]) {
+    if (journal.config[key] !== undefined) profile[key] = journal.config[key];
+  }
+  if (Object.keys(profile).length) {
+    note(`  ${step(`set the journal's own fields — ${Object.keys(profile).join(", ")}`)}`);
+    if (!dry) {
+      const patched = await call("PATCH", `/api/v1/${user}/config`, { body: profile });
+      if (!patched.ok) refuse(patched, `PATCH /api/v1/${user}/config`);
+    }
+  }
+  const features = Object.fromEntries(
+    Object.entries(journal.config.features ?? {})
+      .filter(([, value]) => value && typeof value.enabled === "boolean")
+      .map(([name, value]) => [name, value.enabled]),
+  );
+  if (Object.keys(features).length) {
+    note(`  ${step(`set features — ${Object.entries(features).map(([k, v]) => `${k}=${v}`).join(", ")}`)}`);
+    if (!dry) {
+      const patched = await call("PATCH", `/api/v1/${user}/config`, { body: { features } });
+      // A capability this server cannot offer is refused, and that is a fact
+      // about the server rather than a mistake in the folder: say it and go on.
+      if (!patched.ok) {
+        console.log(`      note: ${patched.body?.error ?? patched.status} — ${patched.body?.message ?? "features left as they were"}`);
+      }
+    }
+  }
+}
 
 // ── 3. each trip ───────────────────────────────────────────────────────────
 const remote = await call("GET", `/api/v1/${user}/trips`);
@@ -143,10 +272,24 @@ for (const trip of journal.trips) {
   }
 
   // ── the days ─────────────────────────────────────────────────────────────
+  //
+  // **The slug is the server's to choose, not the filename's.** It is made
+  // from the title, and a file called `2026-03-01-tag-eins.md` whose title is
+  // "Abfahrt in Basel" becomes `abfahrt-in-basel`. Assuming otherwise sent the
+  // photographs to a day that did not exist, and — worse, on a second run —
+  // would have written every day again under the name it expected.
+  //
+  // So: find the day the instance already has by what identifies it to a
+  // reader (its date and its title), and take the slug from the answer.
+  const listed = await call("GET", `/api/v1/${user}/trips/${trip.id}/days`);
+  if (!listed.ok) refuse(listed, `GET …/${trip.id}/days`);
+  const already = new Map(
+    (listed.body?.days ?? listed.body?.entries ?? []).map((d) => [`${d.date}|${d.title}`, d]),
+  );
+
   for (const entry of trip.entries) {
-    const slug = entry.slug;
-    const there = await call("GET", `/api/v1/${user}/trips/${trip.id}/days/${slug}`);
-    const body = { title: entry.data.title, date: entry.data.date ?? entry.fileDate, content: entry.body };
+    const date = entry.data.date ?? entry.fileDate;
+    const body = { title: entry.data.title, date, content: entry.body };
     for (const key of ["time", "location", "country", "countryCode", "lat", "lng", "tags", "costs",
                        "transportMode", "transportFrom", "transportTo", "travelScene", "test", "translations"]) {
       if (entry.data[key] !== undefined && entry.data[key] !== null) body[key] = entry.data[key];
@@ -155,36 +298,44 @@ for (const trip of journal.trips) {
     // Over the API that is the field set to false, not a list.
     for (const track of entry.data.without ?? []) body[track] = false;
 
-    if (there.status === 404) {
-      note(`  ${step(`write ${slug}`)}`);
-      if (!dry) {
+    const existing = already.get(`${date}|${entry.data.title}`);
+    let slug = existing?.slug ?? null;
+
+    if (!slug) {
+      note(`  ${step(`write ${entry.file}`)}`);
+      if (dry) slug = entry.slug;
+      else {
         const made = await call("POST", `/api/v1/${user}/trips/${trip.id}/days`, {
-          body: { ...body, idempotency_key: `${trip.id}:${slug}` },
+          body: { ...body, idempotency_key: `${trip.id}:${entry.slug}` },
         });
-        if (!made.ok) refuse(made, `POST …/days (${slug})`);
+        if (!made.ok) refuse(made, `POST …/days (${entry.file})`);
+        slug = made.body.slug;
+        note(`      → ${slug}`);
       }
-    } else if (there.ok) {
+    } else {
       note(`  ${step(`update ${slug}`)}`);
       if (!dry) {
         const patched = await call("PATCH", `/api/v1/${user}/trips/${trip.id}/days/${slug}`, { body });
         if (!patched.ok) refuse(patched, `PATCH …/days/${slug}`);
       }
-    } else refuse(there, `GET …/days/${slug}`);
+    }
 
     // ── the photographs ────────────────────────────────────────────────────
     // The instance's own gallery is the record of what has been sent, so a
     // second run uploads nothing rather than duplicating everything. No local
     // state file to go stale.
-    const already = new Set(
-      ((there.ok ? there.body?.entry?.gallery : null) ?? []).map((item) => basename(String(item.src ?? ""))),
-    );
+    const there = dry ? { ok: false } : await call("GET", `/api/v1/${user}/trips/${trip.id}/days/${slug}`);
+    const gallery = (there.ok ? (there.body?.entry?.gallery ?? there.body?.gallery) : null) ?? [];
+    const already_uploaded = new Set(gallery.map((item) => basename(String(item.src ?? ""))));
     const pending = (entry.data.gallery ?? [])
       .map((item) => ({ item, file: galleryFile(journal, trip, item.src) }))
-      .filter(({ item, file }) => file && !already.has(basename(file)) && !String(item.src).startsWith("http"));
+      .filter(({ item, file }) => file && !already_uploaded.has(basename(file)) && !String(item.src).startsWith("http"));
 
     if (pending.length) {
-      // 64 MB is the whole-request ceiling; batch well under it.
-      const LIMIT = 40 * 1024 * 1024;
+      // The instance's own whole-request ceiling, from /api/health, with a
+      // little room left: this is the limit a batch of phone originals meets
+      // first, and it was a guess in this file until the server published it.
+      const LIMIT = Math.floor((LIMITS.requestMaxBytes ?? 64 * 1024 * 1024) * 0.6);
       let batch = [], size = 0;
       const batches = [];
       for (const one of pending) {
