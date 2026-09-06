@@ -80,8 +80,12 @@ there is any doubt about whether they meant the website or just the file.
 .claude/skills/<name>/       one skill: SKILL.md and its scripts, together
 .claude/skills/shared/       lib.mjs (arguments, CSV) · costfile.mjs (costs: blocks)
                              frontmatter.mjs (reading YAML) · model.mjs (every option
-                             there is) · journal.mjs (a folder, parsed) · api.mjs
-                             selftest.mjs (do these tools still agree with the site?)
+                             there is, the fallback) · contentModel.mjs (reads the same
+                             options off <site>/content-model.json instead, when there
+                             is one) · pattern.mjs (a `pattern` rule, matched without
+                             ever handing an untrusted regex to RegExp) · journal.mjs
+                             (a folder, parsed) · api.mjs · selftest.mjs (do these tools
+                             still agree with the site?)
 .claude/skills/shared/fixtures/  the three test journals selftest.mjs runs —
                              committed, unlike content/, because a fixture nobody
                              can clone is not a test
