@@ -249,8 +249,14 @@ function checkJournal(user, only) {
         }
       }
     }
-    if (!trip.plan && data.status === "upcoming") {
-      tip(`content/${user}/trips/${trip.id}/`, "has no plan.md", MODEL["plan.md"].tip);
+    if (!trip.plan) {
+      if (data.status === "upcoming") {
+        tip(`content/${user}/trips/${trip.id}/`, "has no plan.md", MODEL["plan.md"].tip);
+      }
+    } else {
+      const planWhere = `content/${user}/trips/${trip.id}/plan.md`;
+      for (const p of trip.plan.problems) error(planWhere, `line ${p.line}: ${p.why}`, p.text);
+      checkKeys(planWhere, MODEL["plan.md"].keys, trip.plan.data);
     }
 
     const slugs = new Map();

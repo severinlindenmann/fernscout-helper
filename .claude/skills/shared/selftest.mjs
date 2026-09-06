@@ -47,7 +47,7 @@ const FIXTURES = join(ROOT, ".claude/skills/shared/fixtures");
 const EXPECTED = [
   { user: "perfekt", errors: 0, what: "every option set, and nothing wrong" },
   { user: "halbfertig", errors: 0, what: "valid and incomplete — incomplete is not wrong" },
-  { user: "luecken", atLeast: 12, what: "one planted fault of each kind" },
+  { user: "luecken", atLeast: 22, what: "one planted fault of each kind" },
 ];
 
 const validate = join(ROOT, ".claude/skills/validate-content/validate.mjs");
