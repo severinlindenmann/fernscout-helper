@@ -32,7 +32,11 @@ by hand into the same format. A missing tool is not a reason to refuse the job.
 
 **You do not decide what happened.** Every word of an entry comes from what the
 person told you, and every number from something they can point at. No weather
-nobody mentioned, no meals nobody ate, no amount anybody estimated.
+*you* remembered or guessed, no meals nobody ate, no amount anybody estimated.
+`publish --weather` is the one exception that proves this rather than breaking
+it: it asks the Open-Meteo archive what a day's weather actually was, for a
+day that has coordinates — a record, not a memory, and never written from an
+agent's own knowledge.
 
 An empty field beats a plausible fiction. A blank one is a question they can
 answer in four seconds; an invented one is a lie they may never notice, and one
@@ -58,6 +62,11 @@ there is any doubt about whether they meant the website or just the file.
   where they can be seen and deleted. Do not work around this.
 - **A statement says what was paid, never what it was for.** Categories are
   proposed to the person and corrected by them, never decided quietly.
+- **Weather is an archive lookup, not a field to fill in.** A day with
+  coordinates can carry it — `validate-content` tips the offer, `publish
+  --weather` sends it for the whole trip in one run — but it is always the
+  server asking Open-Meteo for what a day actually was, at the person's word,
+  never this repository's own guess. A day with no coordinates gets nothing.
 - **Extracting costs time, bandwidth and sometimes money.** Anything not already
   on the machine is downloaded. Always run the step that counts and estimates
   first, read it back, and get a yes.
