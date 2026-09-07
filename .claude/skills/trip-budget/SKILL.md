@@ -64,15 +64,19 @@ Say it plainly, once: *"If you have a bank or credit-card statement for those
 dates, I can read it and add everything at once — you would only have to tell me
 which lines were not the trip."*
 
-- **Revolut** → the `revolut-costs` skill, which already knows the format.
-- **Any other bank or card** → ask for a CSV export covering the trip dates. The
-  shape differs per bank; `revolut-costs/parse.mjs` is the model to copy, and
-  `apply.mjs` is reused unchanged — it is the same `costs.json` in the middle.
+- **Revolut** → the `statement-costs` skill. The instance reads the format.
+- **Any other bank or card** → ask for a CSV export covering the trip dates,
+  and try `statement-costs` anyway: it says plainly when nothing recognises the
+  file. A bank the instance cannot read yet is an importer to contribute to
+  `importers/costs/` in the fernscout repository — MIT, one file — so that
+  every journal can read it rather than this laptop.
 - **A PDF statement** is not worth parsing. Ask them to read out the handful of
   lines that were the trip, or export CSV instead.
 
 **Say where the file goes and what happens to it:** `import/`, which is
-gitignored, and nothing leaves the machine. A statement carries an IBAN, a
+gitignored — and be straight that reading it means **uploading it** to their
+own journal's inbox, where it stays until they delete it. A statement carries
+an IBAN, a
 balance and every merchant somebody has paid for months. If they would rather
 not, the interview above gets the big lines anyway.
 

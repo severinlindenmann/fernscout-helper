@@ -54,7 +54,7 @@ Every tool here does one of three things.
 | Skill | Say | Needs |
 | --- | --- | --- |
 | `icloud-export` | "help me export photos from iCloud on my Mac" | macOS |
-| `revolut-costs` | "import my Revolut statement" | anywhere |
+| `statement-costs` | "import my Revolut statement", "what did the trip cost" | a journal on an instance |
 | `gps-history` | "add my GPS", "import my Timeline", "the map draws straight lines" | a journal on an instance |
 | `trip-budget` | "what did the trip cost", "add the flights" | anywhere |
 | `validate-content` | "check my journal", "did I forget anything" | anywhere |

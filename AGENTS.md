@@ -16,7 +16,7 @@ running it.
 | They say | Skill |
 | --- | --- |
 | "help me export photos from iCloud on my Mac" | `icloud-export` |
-| "import my Revolut statement" | `revolut-costs` |
+| "import my Revolut statement", "what did the trip cost" | `statement-costs` |
 | "add my GPS", "import my Timeline", "the map draws straight lines" | `gps-history` |
 | "add the budget", "what did the trip cost", "I paid for the flights" | `trip-budget` |
 | "check my journal", "is this right", "did I forget anything", "what else can I set" | `validate-content` |
@@ -49,9 +49,15 @@ Google Takeout, GPX and plain JSON Lines are all read by `importers/` in the
 fernscout repository, which is MIT-licensed for exactly this reason: somebody
 adding a format contributes it there, once, for everybody.
 
-`revolut-costs` is the one that still has it the wrong way round — 122 lines of
-statement parsing that would work identically on the server. B677 in the
-fernscout repository is the move.
+`statement-costs` is the same shape, since B677 moved its parser to the
+instance: it finds the CSV, hands it over, holds the conversation about what
+each merchant was, and sends the agreed rows back. It refuses outright to
+choose a category, which is the one thing in that loop that is nobody's but the
+owner's.
+
+What is left in this repository after those two moves is the honest list: a
+Photos library, an iCloud export, a folder on a disk, the questions, and the
+checks that need to see the files themselves.
 
 ## The one rule
 
