@@ -17,6 +17,7 @@ running it.
 | --- | --- |
 | "help me export photos from iCloud on my Mac" | `icloud-export` |
 | "import my Revolut statement" | `revolut-costs` |
+| "add my GPS", "import my Timeline", "the map draws straight lines" | `gps-history` |
 | "add the budget", "what did the trip cost", "I paid for the flights" | `trip-budget` |
 | "check my journal", "is this right", "did I forget anything", "what else can I set" | `validate-content` |
 | "publish", "put it online", "upload my journal", "sync the trip" | `publish` |
@@ -27,6 +28,30 @@ where to stop and wait for a person.
 
 If nothing here fits what they are asking for, say so plainly and offer to do it
 by hand into the same format. A missing tool is not a reason to refuse the job.
+
+## What belongs here, and what belongs on the instance
+
+**If a thing can run on the server, it runs on the server and this repository
+calls it.** That line decides where new work goes, and it is worth stating
+because the tempting answer is always the other one.
+
+What must be here is what a server cannot reach: a Photos library, an iCloud
+export, a folder on somebody's disk, a PDF that never leaves the machine, and
+the questions only a person can answer. Everything past that — parsing a file
+into rows, checking those rows, deciding what they mean for a trip — belongs on
+the instance, where every journal gets the same version of it and a format
+change is one deployment rather than one laptop at a time.
+
+`gps-history` is the shape to copy. It finds a location export on this machine,
+asks the two questions that need asking, uploads it, and calls
+`POST /api/v1/<user>/import` — and it parses **nothing**. Google Timeline,
+Google Takeout, GPX and plain JSON Lines are all read by `importers/` in the
+fernscout repository, which is MIT-licensed for exactly this reason: somebody
+adding a format contributes it there, once, for everybody.
+
+`revolut-costs` is the one that still has it the wrong way round — 122 lines of
+statement parsing that would work identically on the server. B677 in the
+fernscout repository is the move.
 
 ## The one rule
 

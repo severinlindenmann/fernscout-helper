@@ -55,6 +55,7 @@ Every tool here does one of three things.
 | --- | --- | --- |
 | `icloud-export` | "help me export photos from iCloud on my Mac" | macOS |
 | `revolut-costs` | "import my Revolut statement" | anywhere |
+| `gps-history` | "add my GPS", "import my Timeline", "the map draws straight lines" | a journal on an instance |
 | `trip-budget` | "what did the trip cost", "add the flights" | anywhere |
 | `validate-content` | "check my journal", "did I forget anything" | anywhere |
 | `publish` | "publish", "put it online" | a journal on an instance |
