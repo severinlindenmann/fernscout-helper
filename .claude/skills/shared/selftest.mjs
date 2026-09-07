@@ -183,4 +183,45 @@ if (snapshotFailed > 0) {
     "and commit the result — never hand-edit the JSON.",
   );
 }
-process.exit(failed > 0 || missing > 0 || apiOnlyFailed > 0 || snapshotFailed > 0 ? 1 : 0);
+// publish.mjs's own logic — matching a local file to a remote day, and
+// whether a dry run can plan for a trip the instance does not have yet — has
+// no fixture journal that can exercise it, because the bug is in how it talks
+// to an instance rather than in what a journal says. `publish.test.mjs` runs
+// it against a fake one in-process (B647, B648).
+let publishFailed = 0;
+try {
+  execFileSync(process.execPath, [join(ROOT, ".claude/skills/publish/publish.test.mjs")], { stdio: "inherit" });
+} catch {
+  publishFailed = 1;
+}
+
+// B645: a real photograph through build.mjs, checked afterwards — the one
+// part of this repository that transforms somebody's own files, and the one
+// part nothing here used to run at all.
+let buildFailed = 0;
+try {
+  execFileSync(process.execPath, [join(ROOT, ".claude/skills/icloud-export/build.test.mjs")], { stdio: "inherit" });
+} catch {
+  buildFailed = 1;
+}
+
+// B646: the review page has to preview what actually gets published.
+let reviewFailed = 0;
+try {
+  execFileSync(process.execPath, [join(ROOT, ".claude/skills/icloud-export/review.test.mjs")], { stdio: "inherit" });
+} catch {
+  reviewFailed = 1;
+}
+
+// B649/B650: which photo build.mjs trusts for a day's time and coordinates.
+let metadataFailed = 0;
+try {
+  execFileSync(process.execPath, [join(ROOT, ".claude/skills/icloud-export/build.metadata.test.mjs")], { stdio: "inherit" });
+} catch {
+  metadataFailed = 1;
+}
+
+process.exit(
+  failed > 0 || missing > 0 || apiOnlyFailed > 0 || snapshotFailed > 0 ||
+  publishFailed > 0 || buildFailed > 0 || reviewFailed > 0 || metadataFailed > 0 ? 1 : 0,
+);

@@ -8,6 +8,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync, existsSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { ROOT, arg, die, stemOf } from "../shared/lib.mjs";
+import { ensureBaked } from "./bake.mjs";
 
 const trip = arg("trip") ?? die("--trip <name> is required.");
 const user = arg("user") ?? die("--user <name> is required — the folder your journal lives in.");
@@ -43,30 +44,6 @@ const notes = [`# ${trip} — what the author said`, "",
 let written = 0, copied = 0;
 
 
-// EXIF Orientation, turned into real pixels. The eight values are the standard
-// ones; sips rotates clockwise, and a flip has to come before the rotation.
-const ORIENTATION = {
-  2: { flip: "horizontal" },
-  3: { rotate: 180 },
-  4: { flip: "vertical" },
-  5: { flip: "horizontal", rotate: 270 },
-  6: { rotate: 90 },
-  7: { flip: "horizontal", rotate: 90 },
-  8: { rotate: 270 },
-};
-
-function bakeOrientation(file) {
-  let value;
-  try {
-    value = Number(execFileSync("exiftool", ["-Orientation", "-n", "-s3", file],
-                                { encoding: "utf8" }).trim());
-  } catch { return; }                      // no exiftool reading, no turn to make
-  const turn = ORIENTATION[value];
-  if (!turn) return;                       // 1, or nothing written at all
-  if (turn.flip) execFileSync("sips", ["-f", turn.flip, file], { stdio: "ignore" });
-  if (turn.rotate) execFileSync("sips", ["-r", String(turn.rotate), file], { stdio: "ignore" });
-}
-
 for (const [day, list] of Object.entries(byDay).sort()) {
   const places = list.map((p) => (p.place || "").split(",")[0]).filter(Boolean);
   const place = places.sort((a, b) =>
@@ -78,17 +55,10 @@ for (const [day, list] of Object.entries(byDay).sort()) {
   const gallery = list.map((p, i) => {
     const name = String(i + 1).padStart(2, "0") + ".jpg";
     const dest = join(mediaDir, name);
-    copyFileSync(join(photosDir, p.file), dest);
-    execFileSync("sips", ["-Z", String(MAX_EDGE), dest], { stdio: "ignore" });
-    // A phone that was held sideways writes upright pixels plus an Orientation
-    // tag saying how to turn them. Stripping the tag below would leave the
-    // picture lying on its side for good, so the turn is baked into the pixels
-    // first — a photograph nobody can read is not a photograph.
-    bakeOrientation(dest);
-    // Served pictures carry no metadata: a phone writes the coordinates of
-    // somebody's front door into the file. They live in the frontmatter instead,
-    // where they can be seen and deleted.
-    execFileSync("exiftool", ["-all=", "-overwrite_original", dest], { stdio: "ignore" });
+    // The same derivative `review.mjs` already built (or builds now, if this
+    // is run before a review) — resized, turned upright, stripped — so the
+    // picture a person approved is the one published. B646.
+    copyFileSync(ensureBaked(DIR, photosDir, p.file, MAX_EDGE), dest);
     const dim = execFileSync("sips", ["-g", "pixelWidth", "-g", "pixelHeight", dest], { encoding: "utf8" });
     const [w, h] = [/pixelWidth: (\d+)/, /pixelHeight: (\d+)/].map((re) => Number(dim.match(re)?.[1] ?? 0));
     copied++;
@@ -96,7 +66,23 @@ for (const [day, list] of Object.entries(byDay).sort()) {
              visibility: review.photos?.[p.file]?.visibility || "" };
   });
 
-  const first = list[0], withGps = list.find((p) => p.lat);
+  const withGps = list.find((p) => p.lat);
+  // The day's `time:` orders it against any other entry on the same date, so
+  // it has to be a real moment from the trip — B649: `list[0]` was whichever
+  // file sorted first, screenshots included, and a train-timetable screenshot
+  // taken at 06:44 while planning once became the whole day's timestamp. A
+  // photo with GPS is a photo actually taken on the trip; when none of them
+  // have it (a day of screenshots alone, or an export with no --exiftool),
+  // fall back to the first file rather than leaving `time:` empty.
+  const first = withGps ?? list[0];
+  // B650: `place` above is the day's most-common location name; `withGps` is
+  // the one photo `lat`/`lng` actually come from. They can name different
+  // towns — a whole afternoon's drive apart — and only a person can say which
+  // one is right, so this only prints the disagreement rather than picking.
+  const gpsPlace = (withGps?.place || "").split(",")[0];
+  if (gpsPlace && place && gpsPlace !== place) {
+    console.log(`  ⚠ ${day}: location: "${place}" but the coordinates come from a photo placed in "${gpsPlace}"`);
+  }
   const lines = [
     "---",
     `title: ""                     # the agent writes this`,

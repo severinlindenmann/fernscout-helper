@@ -441,9 +441,17 @@ for (const trip of journal.trips) {
   //      this prints. Two days sharing a date are left alone rather than
   //      guessed at; a genuinely new day on a date that already has one is
   //      still created.
-  const listed = await call("GET", `/api/v1/${user}/trips/${trip.id}/days`);
-  if (!listed.ok) refuse(listed, `GET …/${trip.id}/days`);
-  const days = listed.body?.days ?? listed.body?.entries ?? [];
+  // A trip about to be created in this same run cannot have any days on the
+  // instance yet, so a 404 here is the empty list that plan needs rather than
+  // a refusal — the same reasoning `refuse()` already gets for a trip that
+  // exists, just not yet for one that does not. `--offline` skips the request
+  // outright, matching the two other places this file already does that.
+  const isNewTrip = !existing.has(trip.id);
+  const listed = offline ? { ok: false } : await call("GET", `/api/v1/${user}/trips/${trip.id}/days`);
+  let days;
+  if (listed.ok) days = listed.body?.days ?? listed.body?.entries ?? [];
+  else if (offline || (isNewTrip && listed.status === 404)) days = [];
+  else refuse(listed, `GET …/${trip.id}/days`);
   const bySlug = new Map(days.map((d) => [d.slug, d]));
   const byTitleDate = new Map(days.map((d) => [`${d.date}|${d.title}`, d]));
   const byDate = new Map();
@@ -456,6 +464,18 @@ for (const trip of journal.trips) {
   // sharing a date with one already claimed by the date-only guess would be
   // "matched" onto it too, and never created at all.
   const claimed = new Set();
+  // The date-alone guess below is only sound when the *local* side is just as
+  // unambiguous as the remote side it already checks — B647: a Friday split
+  // into two local entries, matched against one remote day sharing that date,
+  // let the first entry processed win the date-alone branch and overwrite the
+  // other Friday's content. Counting local entries per date the same way
+  // `byDate` counts remote ones is the other half of the invariant the
+  // comment above states.
+  const localByDate = new Map();
+  for (const e of trip.entries) {
+    const d = e.data.date ?? e.fileDate;
+    localByDate.set(d, (localByDate.get(d) ?? 0) + 1);
+  }
 
   for (const entry of trip.entries) {
     const date = entry.data.date ?? entry.fileDate;
@@ -521,10 +541,17 @@ for (const trip of journal.trips) {
       const byTD = byTitleDate.get(`${date}|${entry.data.title}`);
       if (byTD && !claimed.has(byTD.slug)) existing = byTD;
     }
+    // A guess, made only when *both* sides agree there is nothing else it
+    // could be: one remote day on this date, and — since B647 — exactly one
+    // local entry on it too. Two local entries sharing a date make the guess
+    // provably ambiguous (which one is "the" day on that date?), so both are
+    // left to be created instead, however many remote days share the date.
+    let guessed = false;
     if (!existing) {
       const sameDate = (byDate.get(date) ?? []).filter((d) => !claimed.has(d.slug));
-      if (sameDate.length === 1) {
+      if (sameDate.length === 1 && localByDate.get(date) === 1) {
         existing = sameDate[0];
+        guessed = true;
         how = `loosely, by date alone (${date}) — neither its recorded slug nor its title ` +
           `matched, and this was the only day the instance has on that date`;
       }
@@ -582,7 +609,9 @@ for (const trip of journal.trips) {
         if (!patched.ok) refuse(patched, `PATCH …/days/${slug}`);
       }
     }
-    if (!dry && slug) recordSlug(entry, slug);
+    // Never record a slug this run only guessed at — writing it back turns
+    // one wrong match into a permanent one, repeated on every future run.
+    if (!dry && slug && !guessed) recordSlug(entry, slug);
 
     // ── the photographs ────────────────────────────────────────────────────
     // The instance's own gallery is the record of what has been sent, so a

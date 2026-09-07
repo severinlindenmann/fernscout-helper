@@ -11,6 +11,7 @@ import { execFileSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ROOT, arg, die, stemOf } from "../shared/lib.mjs";
+import { ensureBaked } from "./bake.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const trip = arg("trip") ?? die("--trip <name> is required.");
@@ -28,6 +29,15 @@ const photos = files.map((file) => {
   return { file, day: m.day ?? "", time: m.time ?? "", place: m.place ?? "", fav: !!m.fav };
 }).sort((a, b) => (a.day + a.time).localeCompare(b.day + b.time));
 
+// The picture a person approves here has to be the picture that gets
+// published — B646. `ensureBaked` is the same resize-turn-strip `build.mjs`
+// runs; doing it now means both `/full/` below and the thumbnails made from
+// it already show a phone held sideways the right way up, instead of the
+// original's own Orientation tag doing that in the browser while `build.mjs`
+// bakes a different picture afterwards.
+console.log(`preparing ${files.length} photo${files.length === 1 ? "" : "s"}…`);
+const baked = new Map(files.map((f) => [f, ensureBaked(DIR, PHOTOS, f)]));
+
 // A browser asked to decode 6 MB originals into 250px boxes crawls. Thumbnails
 // are made once, with sips, which is already on every Mac.
 let thumbed = [];
@@ -36,7 +46,7 @@ if (thumbed.filter((f) => /\.jpe?g$/i.test(f)).length !== files.length) {
   console.log(`making ${files.length} thumbnails…`);
   execFileSync("mkdir", ["-p", THUMBS]);
   execFileSync("sips", ["-Z", "500", "-s", "formatOptions", "65",
-    ...files.map((f) => join(PHOTOS, f)), "--out", THUMBS], { stdio: "ignore" });
+    ...files.map((f) => baked.get(f)), "--out", THUMBS], { stdio: "ignore" });
 }
 
 const HTML = String.raw`<!doctype html><meta charset="utf-8"><meta name=viewport content="width=device-width,initial-scale=1">
@@ -218,11 +228,18 @@ createServer(async (req, res) => {
     await writeFile(STATE, JSON.stringify(JSON.parse(Buffer.concat(chunks)), null, 2));
     return res.writeHead(204).end();
   }
-  for (const [prefix, folder] of [["/img/", THUMBS], ["/full/", PHOTOS]]) {
-    if (!url.startsWith(prefix)) continue;
-    const name = url.slice(prefix.length);
+  if (url.startsWith("/img/")) {
+    const name = url.slice("/img/".length);
     if (!files.includes(name)) return res.writeHead(404).end();
-    return createReadStream(join(folder, name))
+    return createReadStream(join(THUMBS, name))
+      .pipe(res.writeHead(200, { "content-type": "image/jpeg", "cache-control": "max-age=86400" }));
+  }
+  if (url.startsWith("/full/")) {
+    const name = url.slice("/full/".length);
+    if (!files.includes(name)) return res.writeHead(404).end();
+    // The baked derivative, not the original — see it big should mean see
+    // what will actually be published, orientation and all.
+    return createReadStream(baked.get(name))
       .pipe(res.writeHead(200, { "content-type": "image/jpeg", "cache-control": "max-age=86400" }));
   }
   res.writeHead(404).end();
