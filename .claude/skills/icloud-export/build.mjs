@@ -91,6 +91,17 @@ for (const [day, list] of Object.entries(byDay).sort()) {
   // the one photo `lat`/`lng` actually come from. They can name different
   // towns — a whole afternoon's drive apart — and only a person can say which
   // one is right, so this only prints the disagreement rather than picking.
+  // B1540: Photos already knows the country — `place` is the whole string,
+  // "Zurich Airport, Rümlang, Canton of Zürich, Switzerland", and only its
+  // first component was ever read. The last one is the country, except over
+  // water, where Photos names the sea instead and there is no country to have.
+  // Taking the day's most common answer rather than the first photo's is the
+  // same rule `place` above already uses.
+  const countries = list.map((p) => (p.place || "").split(",").map((s) => s.trim()).pop())
+    .filter((c) => c && !/\b(Sea|Ocean|Bay|Gulf|Strait)\b/.test(c));
+  const country = countries.sort((a, b) =>
+    countries.filter((x) => x === b).length - countries.filter((x) => x === a).length)[0] ?? "";
+
   const gpsPlace = (withGps?.place || "").split(",")[0];
   if (gpsPlace && place && gpsPlace !== place) {
     console.log(`  ⚠ ${day}: location: "${place}" but the coordinates come from a photo placed in "${gpsPlace}"`);
@@ -101,6 +112,12 @@ for (const [day, list] of Object.entries(byDay).sort()) {
     `date: "${day}"`,
     `time: "${first.time}"`,
     place ? `location: "${place}"` : `location: ""`,
+    // The name as Photos gives it, which is the Mac's own language — the
+    // journal may be written in another one. No `countryCode:`: mapping a
+    // name to ISO 3166 is a table this repository would have to keep, and a
+    // wrong flag is worse than no flag. The instance takes one without the
+    // other.
+    ...(country ? [`country: ${JSON.stringify(country)}`] : []),
     ...(withGps ? [`lat: ${withGps.lat}`, `lng: ${withGps.lng}`] : []),
     "gallery:",
     ...gallery.flatMap((g) => [
