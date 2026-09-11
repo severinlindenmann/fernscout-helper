@@ -130,8 +130,20 @@ function checkValue(where, key, rule, value) {
   }
 }
 
+// B1401 — a key the parser never reached is not the same finding as a key
+// the file genuinely lacks, and this is the one place both meet: every
+// caller below that would otherwise say "X is missing" about a file has to
+// check this first. `frontmatter.mjs` marks exactly this with `truncated`
+// on the one problem it emits when it stops early, naming (best-effort)
+// which top-level keys came after the point it gave up on.
+const NO_UNREADABLE_KEYS = new Set();
+function unreadableKeys(problems) {
+  const keys = (problems ?? []).flatMap((p) => (p.truncated ? p.unreadKeys ?? [] : []));
+  return keys.length ? new Set(keys) : NO_UNREADABLE_KEYS;
+}
+
 /** A whole frontmatter block against a MODEL file. */
-function checkKeys(where, keys, data, { tips = true, scope = null } = {}) {
+function checkKeys(where, keys, data, { tips = true, scope = null, unreadable = NO_UNREADABLE_KEYS } = {}) {
   const known = Object.keys(keys);
   for (const [key, local] of Object.entries(keys)) {
     if (local.apiOnly) continue;
@@ -142,6 +154,12 @@ function checkKeys(where, keys, data, { tips = true, scope = null } = {}) {
       // it is not a key anybody forgot to write. `noTip` is for the fields it
       // would be wrong to suggest: nobody should be nudged towards `test`.
       if (local.body || local.noTip) continue;
+      // The parser stopped before it ever reached this key — it is not
+      // confirmed absent, and the truncation itself is already reported
+      // (as its own problem, with the line it happened on) wherever this
+      // file's `problems` are walked. Saying "missing" here too would be
+      // the same wrong claim in a second sentence.
+      if (unreadable.has(key)) continue;
       if (rule.required) error(where, `${key} is missing`, rule.note ?? `required — ${rule.type}`);
       else if (rule.tip && tips) tip(where, `${key} is not set`, rule.tip, key);
       continue;
@@ -347,7 +365,7 @@ function checkJournal(user, only) {
 
     if (!trip.trip) { error(tripWhere, "is missing", "a trip without trip.md is not a trip"); continue; }
     for (const p of trip.trip.problems) error(tripWhere, `line ${p.line}: ${p.why}`, p.text);
-    checkKeys(tripWhere, MODEL["trip.md"].keys, trip.trip.data, { scope: "trip" });
+    checkKeys(tripWhere, MODEL["trip.md"].keys, trip.trip.data, { scope: "trip", unreadable: unreadableKeys(trip.trip.problems) });
 
     const data = trip.trip.data;
     if (data.id && data.id !== trip.id) error(tripWhere, `id is ${JSON.stringify(data.id)} but the folder is ${trip.id}`, "they must match");
@@ -369,7 +387,7 @@ function checkJournal(user, only) {
     else {
       const costsWhere = `content/${user}/trips/${trip.id}/costs.md`;
       for (const p of trip.costs.problems) error(costsWhere, `line ${p.line}: ${p.why}`, p.text);
-      checkKeys(costsWhere, MODEL["costs.md"].keys, trip.costs.data);
+      checkKeys(costsWhere, MODEL["costs.md"].keys, trip.costs.data, { unreadable: unreadableKeys(trip.costs.problems) });
       checkCosts(costsWhere, trip.costs.data.costs);
       const budget = trip.costs.data.budget;
       if (budget && typeOf(budget) === "object") {
@@ -397,7 +415,7 @@ function checkJournal(user, only) {
     } else {
       const planWhere = `content/${user}/trips/${trip.id}/plan.md`;
       for (const p of trip.plan.problems) error(planWhere, `line ${p.line}: ${p.why}`, p.text);
-      checkKeys(planWhere, MODEL["plan.md"].keys, trip.plan.data);
+      checkKeys(planWhere, MODEL["plan.md"].keys, trip.plan.data, { unreadable: unreadableKeys(trip.plan.problems) });
     }
 
     const slugs = new Map();
@@ -410,6 +428,7 @@ function checkJournal(user, only) {
     for (const entry of trip.entries) {
       const entryWhere = `content/${user}/trips/${trip.id}/entries/${entry.file}`;
       for (const p of entry.problems) error(entryWhere, `line ${p.line}: ${p.why}`, p.text);
+      const unreadEntryKeys = unreadableKeys(entry.problems);
 
       // Three things this day should not be nudged about, because the answer
       // is already settled and asking again is how an agent ends up inventing
@@ -428,7 +447,7 @@ function checkJournal(user, only) {
         if (on === false) errored.add(`${entryWhere}|${track === "coordinates" ? "lat" : track}`);
       }
       if (locales.length < 2) errored.add(`${entryWhere}|translations`);
-      checkKeys(entryWhere, MODEL["entries/YYYY-MM-DD-slug.md"].keys, entry.data, { scope: "day" });
+      checkKeys(entryWhere, MODEL["entries/YYYY-MM-DD-slug.md"].keys, entry.data, { scope: "day", unreadable: unreadEntryKeys });
       if (!entry.body) error(entryWhere, "has no prose", "the body under the frontmatter is the day itself");
 
       if (!entry.fileDate) error(entryWhere, "is not named YYYY-MM-DD-slug.md", "the date orders it and the slug addresses it");
@@ -473,7 +492,10 @@ function checkJournal(user, only) {
         ["coordinates", entry.data.lat !== undefined && entry.data.lng !== undefined],
         ["photos", Array.isArray(entry.data.gallery) && entry.data.gallery.length > 0],
       ]) {
-        if (tracks[track] === false || answered || declined.has(track)) continue;
+        // A track whose backing key the parser never reached is not a
+        // confirmed silence either — see unreadableKeys() above.
+        if (tracks[track] === false || answered || declined.has(track) ||
+            unreadEntryKeys.has(track === "coordinates" ? "lat" : track === "photos" ? "gallery" : track)) continue;
         errored.add(`${entryWhere}|${track === "coordinates" ? "lat" : track}`);
         error(entryWhere, `the trip tracks ${track} and this day says nothing about it`,
           `Ask the person what this day had. If it had some, send it. If it genuinely had ` +
@@ -525,7 +547,8 @@ function checkJournal(user, only) {
       }
 
       const gallery = entry.data.gallery;
-      if ((!gallery || (Array.isArray(gallery) && gallery.length === 0)) && tracks.photos !== false && !declined.has("photos")) {
+      if (!unreadEntryKeys.has("gallery") &&
+          (!gallery || (Array.isArray(gallery) && gallery.length === 0)) && tracks.photos !== false && !declined.has("photos")) {
         tip(entryWhere, "has no photographs", "POST them to …/trips/<trip>/media with this day's slug", "photos");
       } else if (Array.isArray(gallery)) {
         gallery.forEach((item, index) => {

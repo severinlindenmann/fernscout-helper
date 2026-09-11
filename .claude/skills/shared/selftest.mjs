@@ -195,6 +195,15 @@ try {
   publishFailed = 1;
 }
 
+// B1401: a stopped YAML parse has to say so explicitly, and block scalars
+// (`|`/`>`) have to be read rather than triggering a stop at all.
+let frontmatterFailed = 0;
+try {
+  execFileSync(process.execPath, [join(ROOT, ".claude/skills/shared/frontmatter.test.mjs")], { stdio: "inherit" });
+} catch {
+  frontmatterFailed = 1;
+}
+
 // B645: a real photograph through build.mjs, checked afterwards — the one
 // part of this repository that transforms somebody's own files, and the one
 // part nothing here used to run at all.
@@ -223,5 +232,5 @@ try {
 
 process.exit(
   failed > 0 || missing > 0 || apiOnlyFailed > 0 || snapshotFailed > 0 ||
-  publishFailed > 0 || buildFailed > 0 || reviewFailed > 0 || metadataFailed > 0 ? 1 : 0,
+  publishFailed > 0 || frontmatterFailed > 0 || buildFailed > 0 || reviewFailed > 0 || metadataFailed > 0 ? 1 : 0,
 );
