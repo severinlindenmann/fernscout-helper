@@ -8,11 +8,11 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync, existsSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { ROOT, arg, die, stemOf } from "../shared/lib.mjs";
-import { ensureBaked } from "./bake.mjs";
+import { ensureBaked, DEFAULT_MAX_EDGE } from "./bake.mjs";
 
 const trip = arg("trip") ?? die("--trip <name> is required.");
 const user = arg("user") ?? die("--user <name> is required — the folder your journal lives in.");
-const MAX_EDGE = Number(arg("max-edge") ?? 2000);
+const MAX_EDGE = Number(arg("max-edge") ?? DEFAULT_MAX_EDGE);
 
 const DIR = join(ROOT, "export", trip);
 const photosDir = join(DIR, "photos");
@@ -42,13 +42,25 @@ const notes = [`# ${trip} — what the author said`, "",
   "Everything below is the person's own words. Write the entries from this and",
   "from nothing else: no weather nobody mentioned, no meals nobody ate.", ""];
 let written = 0, copied = 0;
+const usedSlugs = new Set();
 
 
 for (const [day, list] of Object.entries(byDay).sort()) {
   const places = list.map((p) => (p.place || "").split(",")[0]).filter(Boolean);
   const place = places.sort((a, b) =>
     places.filter((x) => x === b).length - places.filter((x) => x === a).length)[0] ?? "";
-  const daySlug = slug(place) || "day";
+  // B1539: the slug is the day's whole identity — its URL, the name of its
+  // media folder, and what the reader matches `media/<slug>/` back to a day
+  // by. Slugged from the place alone it is not unique, and a trip that stays
+  // put breaks it twice over: ten days on the same island all resolved to
+  // `media/phuket-island/` and overwrote one another's photographs, and the
+  // instance refuses the second day to claim the slug outright. Number the
+  // repeats. The date cannot do this job — it would leave the folder no
+  // longer equal to the slug, and every day's pictures belonging to no day.
+  const base = slug(place) || "day";
+  let daySlug = base, n = 1;
+  while (usedSlugs.has(daySlug)) daySlug = `${base}-${++n}`;
+  usedSlugs.add(daySlug);
   const mediaDir = join(TRIP, "media", daySlug);
   mkdirSync(mediaDir, { recursive: true });
 
