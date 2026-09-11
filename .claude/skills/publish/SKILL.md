@@ -22,13 +22,24 @@ run still sends the day bodies again, because the folder is the source of
 truth and re-sending is how an edit on disk reaches the site. So the plan it
 prints on a second run is shorter than the first, not empty.
 
-For a trip that already exists, only what has its own door goes out on a
-second run: `visibility`/`listed`, `rates`, `people`, `travellers` and
-`tracks`. `title`, `start`, `end`, `tagline`, `accent`, `intro` and
-`translations` have no door yet on an existing trip (B245, in the fernscout
-repo) — editing those in `trip.md` after the trip is created does not reach
-the site, and the run prints a warning naming whichever of them it finds
-disagreeing with what the site shows, rather than reaching the site.
+For a trip that already exists, every field in `trip.md` now has a door
+(B1525, closing B245): `visibility`/`listed`/`teaser`, `rates`, `people`,
+`travellers` and `tracks` each have their own, and `title`, `start`, `end`,
+`tagline`, `accent`, `costsVisibility`, `intro` and `translations` go out
+together through `PATCH /api/v1/{user}/trips/{trip}`, only sending whichever
+of them actually differ from what the site already shows.
+
+`cover` is the one field that cannot go out with the others. Its value has
+to be a `src` the trip's gallery already carries, so it is sent last, after
+the photographs — and it is translated on the way: `cover:` in `trip.md`
+names a photo in *local* terms (`/media/<trip>/<folder>/<file>`, the folder
+this export wrote), while the instance's own gallery src is built from the
+day's *slug* (`/<user>/media/<trip>/<day-slug>/<file>`), which comes from the
+day's title and has no reason to match the local folder name. This run finds
+which day's photographs actually carry that local file and re-addresses it
+under that day's real slug before sending it — a `cover:` naming a photo no
+day's gallery carries is refused with a plain sentence saying so rather than
+sent and quietly rejected by the server.
 
 **Retitling a day is safe.** The first time this script writes a day it
 records the slug the instance assigned back into that entry's own frontmatter
@@ -52,6 +63,13 @@ genuinely new day on a date that already has one is still created.
 --drafts              write and upload, but do not put anything on the site
 --weather             ask the archive for the weather, on every day with lat/lng
 --skip-validate       start even though validate-content reports errors
+--replace-media       a photo already on a day, sent again under the same
+                      filename, is normally skipped (this route matches by
+                      basename) — this deletes the remote copy first, by its
+                      own src, then sends the local file in its place. Use
+                      it after re-baking an export at a higher resolution
+                      (B1529); it is not something to leave on by default,
+                      since every run then re-sends every photo already there.
 ```
 
 `FERNSCOUT_URL` picks a different instance; it defaults to
@@ -198,7 +216,8 @@ Everything the file carries, not the fields anyone remembers:
 | `people:` on a trip that already exists | `PATCH …/trips/<trip>/people` |
 | `travellers:` on a trip that already exists | `PATCH …/trips/<trip>/travellers` |
 | `tracks:` on a trip that already exists | `PATCH …/trips/<trip>/tracks` |
-| `title`/`start`/`end`/`tagline`/`accent`/`intro`/`translations` edited on a trip that already exists | nowhere — no door yet (B245); the run warns instead |
+| `title`/`start`/`end`/`tagline`/`accent`/`costsVisibility`/`intro`/`translations` edited on a trip that already exists | `PATCH …/trips/<trip>`, whichever of them changed |
+| `cover:` on a trip that already exists | `PATCH …/trips/<trip>`, last — translated to the `src` the trip's gallery actually holds |
 | `costs.md` budget, costs and prose | `PUT …/trips/<trip>/costs` |
 | each `entries/*.md` + its prose | `POST …/days` (`content`), or `PATCH` if it is there |
 | `without: [costs]` on a day | `costs: false` — *there was no money on this day* |

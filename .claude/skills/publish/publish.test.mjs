@@ -60,6 +60,30 @@ write("b647legit", "solotrip", "2025-06-01-mittag.md", { title: "Mittag" });
 // b648fix: a trip the fake instance has never heard of.
 write("b648fix", "newtrip", "2026-01-01-ankunft.md", { title: "Ankunft" });
 
+// b1525cover: an existing trip whose title has changed since it was
+// created, and whose trip.md names a cover in *local* terms — the folder
+// the export wrote, not the slug the instance assigned the day.
+write("b1525cover", "voyage", "2025-08-01-day-one.md", {
+  title: "Day One",
+  date: "2025-08-01",
+  gallery: [{ src: "/media/voyage/local-folder/02.jpg", type: "image", width: 10, height: 10 }],
+});
+mkdirSync(join(CONTENT, "b1525cover", "trips", "voyage"), { recursive: true });
+writeFileSync(join(CONTENT, "b1525cover", "trips", "voyage", "trip.md"),
+  '---\nid: "voyage"\ntitle: "Voyage Diaries"\ntagline: "Same"\n' +
+  'cover: "/media/voyage/local-folder/02.jpg"\n---\n\nIntro.\n');
+
+// b1529replace: a day whose photo already exists remotely under the same
+// basename, but bigger locally now — the shape that used to need a
+// hand-driven DELETE plus a hand-driven re-upload, 177 times over.
+write("b1529replace", "biggerphotos", "2025-09-01-bigger.md", {
+  title: "Bigger",
+  date: "2025-09-01",
+  gallery: [{ src: "/media/biggerphotos/bigger/01.jpg", type: "image", width: 40, height: 30 }],
+});
+mkdirSync(join(CONTENT, "b1529replace", "trips", "biggerphotos", "media", "bigger"), { recursive: true });
+writeFileSync(join(CONTENT, "b1529replace", "trips", "biggerphotos", "media", "bigger", "01.jpg"), "bigger-bytes");
+
 // b1400fix: no trips at all — this scenario only exercises the config PATCH,
 // which happens before the per-trip loop.
 mkdirSync(join(CONTENT, "b1400fix"), { recursive: true });
@@ -107,16 +131,58 @@ const routes = {
     note: "Changed: weather. This is what the journal asks for; the server is still the ceiling above it, and /api/health says what it provides.",
   }],
   "GET /api/v1/b1400fix/trips": () => [200, { trips: [] }],
+
+  "GET /api/v1/b1525cover/status": () => [200, { trips: [{ id: "voyage" }] }],
+  "GET /api/v1/b1525cover/trips": () => [200, { trips: [{ id: "voyage" }] }],
+  // The instance's own record: an old title, the tagline already matching
+  // (so it must NOT show up in the PATCH body), and no cover yet.
+  "GET /api/v1/b1525cover/trips/voyage": () => [200, { title: "Old Title", tagline: "Same", cover: null }],
+  "PATCH /api/v1/b1525cover/trips/voyage": () => [200, {}],
+  "GET /api/v1/b1525cover/trips/voyage/days": () => [200, {
+    days: [{ slug: "der-erste-tag", date: "2025-08-01", title: "Day One" }],
+  }],
+  // Already carries the file (matched by basename) — nothing left to upload,
+  // so this scenario never needs a real file on disk for the photograph.
+  "GET /api/v1/b1525cover/trips/voyage/days/der-erste-tag": () => [200, {
+    gallery: [{ src: "/b1525cover/media/voyage/der-erste-tag/02.jpg" }],
+  }],
+  "PATCH /api/v1/b1525cover/trips/voyage/days/der-erste-tag": () => [200, {}],
+
+  "GET /api/v1/b1529replace/status": () => [200, { trips: [{ id: "biggerphotos" }] }],
+  "GET /api/v1/b1529replace/trips": () => [200, { trips: [{ id: "biggerphotos" }] }],
+  "GET /api/v1/b1529replace/trips/biggerphotos": () => [200, {}],
+  "GET /api/v1/b1529replace/trips/biggerphotos/days": () => [200, {
+    days: [{ slug: "bigger-slug", date: "2025-09-01", title: "Bigger" }],
+  }],
+  // The instance already has a smaller version of this file, under the same
+  // basename — exactly what `publish` would otherwise skip as "already sent".
+  "GET /api/v1/b1529replace/trips/biggerphotos/days/bigger-slug": () => [200, {
+    gallery: [{ src: "/b1529replace/media/biggerphotos/bigger-slug/01.jpg" }],
+  }],
+  "PATCH /api/v1/b1529replace/trips/biggerphotos/days/bigger-slug": () => [200, {}],
+  "DELETE /api/v1/b1529replace/trips/biggerphotos/media": () => [200, { removed: ["/b1529replace/media/biggerphotos/bigger-slug/01.jpg"] }],
+  "POST /api/v1/b1529replace/trips/biggerphotos/media": () => [200, { added: 1 }],
 };
+
+// B1525 — the trip-level PATCH bodies, keyed by "METHOD URL", so a test can
+// check *what* was sent and not merely that something was.
+const patchBodies = {};
 
 const server = createServer(async (req, res) => {
   // A POST's body has to be drained even when nothing here reads it — an
   // unread body left on a keep-alive socket blocks the *next* request on the
   // same connection forever, which looked like publish.mjs hanging and was
   // actually this fake server never finishing the one before it.
-  for await (const _chunk of req) { /* discarded */ }
+  const chunks = [];
+  for await (const chunk of req) chunks.push(chunk);
   const [method, url] = [req.method, req.url.split("?")[0]];
   requests.push(`${method} ${url}`);
+  if ((method === "PATCH" || method === "DELETE") && chunks.length) {
+    const key = `${method} ${url}`;
+    try {
+      (patchBodies[key] ??= []).push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+    } catch { /* multipart or empty */ }
+  }
   const handler = routes[`${method} ${url}`];
   const [status, body] = handler ? handler() : [404, { error: "not_found_in_test_server" }];
   res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body));
@@ -207,6 +273,50 @@ const check = (label, ok, detail = "") => {
     /not applied: costs/.test(result.stdout), result.stdout);
   check("B1400: a key the server did change is not also listed as unapplied",
     !/not applied:.*weather/.test(result.stdout), result.stdout);
+}
+
+// ── B1525: an existing trip's title/cover PATCH — cover translated from the
+//    local folder into the day's real slug, and unchanged fields left out ──
+{
+  const result = await run("b1525cover", "voyage", "--drafts");
+  check("B1525: a changed title reaches PATCH .../trips/{trip}",
+    result.requests.includes("PATCH /api/v1/b1525cover/trips/voyage"), result.requests.join(", "));
+  const tripBodies = patchBodies["PATCH /api/v1/b1525cover/trips/voyage"] ?? [];
+  const titleBody = tripBodies.find((b) => "title" in b);
+  check("B1525: the title patch carries only what changed, not the tagline that already matched",
+    titleBody?.title === "Voyage Diaries" && titleBody?.tagline === undefined,
+    JSON.stringify(tripBodies));
+  check("B1525: cover goes out in its own PATCH, once the day's real slug is known",
+    tripBodies.some((b) => b.cover === "/b1525cover/media/voyage/der-erste-tag/02.jpg"),
+    JSON.stringify(tripBodies));
+  check("B1525: a local cover is resolved to the instance's own slug-based src, not sent verbatim",
+    result.stdout.includes("/b1525cover/media/voyage/der-erste-tag/02.jpg") &&
+    !result.stdout.includes("set cover — /media/voyage/local-folder/02.jpg → /media/voyage/local-folder/02.jpg"),
+    result.stdout);
+  check("B1525: the day's own gallery upload is skipped — the photo was already there by basename",
+    !result.stdout.includes("send 1 file"), result.stdout);
+}
+
+// ── B1529: --replace-media deletes the remote copy by src, then re-sends ──
+{
+  const result = await run("b1529replace", "biggerphotos", "--drafts", "--replace-media");
+  check("B1529: the already-there photo is deleted by its exact remote src, not the local one",
+    result.requests.includes("DELETE /api/v1/b1529replace/trips/biggerphotos/media"), result.requests.join(", "));
+  const deleteBody = (patchBodies["DELETE /api/v1/b1529replace/trips/biggerphotos/media"] ?? [])[0];
+  check("B1529: the delete names the day and the instance's own src",
+    deleteBody?.day === "bigger-slug" &&
+    Array.isArray(deleteBody?.src) && deleteBody.src.includes("/b1529replace/media/biggerphotos/bigger-slug/01.jpg"),
+    JSON.stringify(deleteBody));
+  check("B1529: the larger local file is re-sent after the delete, not skipped as already uploaded",
+    result.requests.includes("POST /api/v1/b1529replace/trips/biggerphotos/media"), result.requests.join(", "));
+}
+{
+  // Without the flag, the same basename is left alone — no delete, no re-send.
+  const result = await run("b1529replace", "biggerphotos", "--drafts");
+  check("B1529: without --replace-media, an already-uploaded basename is left alone",
+    !result.requests.includes("DELETE /api/v1/b1529replace/trips/biggerphotos/media") &&
+    !result.requests.includes("POST /api/v1/b1529replace/trips/biggerphotos/media"),
+    result.requests.join(", "));
 }
 
 server.close();
