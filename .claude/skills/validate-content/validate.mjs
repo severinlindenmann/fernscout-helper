@@ -785,4 +785,11 @@ if (has("json")) {
   if (counts.error) console.log("Publishing is refused while there are errors.");
 }
 
-process.exit(counts.error ? 1 : 0);
+// `process.exitCode`, NOT `process.exit()`. When stdout is a pipe — which it
+// is for every caller that reads `--json`, `selftest.mjs` included — writes to
+// it are asynchronous, and `process.exit()` tears the process down with the
+// tail of the report still unwritten. An 86 KB report arrived as 65 KB of
+// perfectly good JSON ending mid-string, and the reader could only say "the
+// validator did not answer with JSON". Setting the code lets Node exit once
+// stdout has drained.
+process.exitCode = counts.error ? 1 : 0;
