@@ -42,6 +42,13 @@ import { fileURLToPath } from "node:url";
 import { arg, has } from "../shared/lib.mjs";
 import { SITE, call, health, refusal, token } from "../shared/api.mjs";
 import { galleryFile, readJournal } from "../shared/journal.mjs";
+import { TRIP_UPDATE_DOORS } from "../shared/tripFields.mjs";
+
+// Keys with their own dedicated door above, or sent after the day loop below
+// (cover) — subtracted from TRIP_UPDATE_DOORS rather than listed a second
+// time, so the general PATCH only ever sends what nothing else already has.
+const TRIP_DEDICATED_DOORS = new Set(["visibility", "listed", "teaser", "rates", "people", "travellers", "tracks", "cover", "intro"]);
+const TRIP_GENERAL_PATCH_KEYS = TRIP_UPDATE_DOORS.filter((key) => !TRIP_DEDICATED_DOORS.has(key));
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const user = arg("user");
@@ -417,7 +424,7 @@ for (const trip of journal.trips) {
     if (detail.ok) {
       const live = detail.body ?? {};
       const patchBody = {};
-      for (const key of ["title", "start", "end", "tagline", "accent", "costsVisibility", "translations"]) {
+      for (const key of TRIP_GENERAL_PATCH_KEYS) {
         if (data[key] === undefined || data[key] === null) continue;
         if (JSON.stringify(data[key]) !== JSON.stringify(live[key])) patchBody[key] = data[key];
       }
@@ -430,7 +437,7 @@ for (const trip of journal.trips) {
         }
       }
     } else if (!offline) {
-      console.log(`      note: could not read the trip back to check title/start/end/tagline/accent/costsVisibility/intro/translations (${detail.status})`);
+      console.log(`      note: could not read the trip back to check ${TRIP_GENERAL_PATCH_KEYS.join("/")}/intro (${detail.status})`);
     }
   }
 

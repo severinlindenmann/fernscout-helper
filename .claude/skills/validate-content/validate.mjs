@@ -23,6 +23,7 @@ import { crosscheck, resolveModel } from "../shared/contentModel.mjs";
 import { CONTENT, galleryFile, isJournalShaped, readJournal, suggestedContentDir, usernames } from "../shared/journal.mjs";
 import { deref, health, openapi, requestSchema } from "../shared/api.mjs";
 import { slugify as titleSlugify } from "../shared/slug.mjs";
+import { TRIP_NO_UPDATE_DOOR, TRIP_UPDATE_DOORS } from "../shared/tripFields.mjs";
 
 /** Great-circle distance in km, for comparing two days' coordinates (B1522). */
 function haversineKm(lat1, lng1, lat2, lng2) {
@@ -379,6 +380,22 @@ function checkJournal(user, only) {
     if (!trip.trip) { error(tripWhere, "is missing", "a trip without trip.md is not a trip"); continue; }
     for (const p of trip.trip.problems) error(tripWhere, `line ${p.line}: ${p.why}`, p.text);
     checkKeys(tripWhere, MODEL["trip.md"].keys, trip.trip.data, { scope: "trip", unreadable: unreadableKeys(trip.trip.problems) });
+
+    // B1518 — `teaser`, then `cover`, each went out in silence for a while
+    // because `publish.mjs`'s own key lists fell behind what `trip.md` is
+    // actually allowed to carry. TRIP_UPDATE_DOORS is that file's own list of
+    // what it can send once a trip exists; a key content-model.json knows
+    // and that list does not (and that is not one of the three with no
+    // update door on purpose) is exactly the next `teaser` waiting to happen.
+    for (const key of Object.keys(MODEL["trip.md"].keys)) {
+      if (TRIP_UPDATE_DOORS.includes(key) || TRIP_NO_UPDATE_DOOR.has(key)) continue;
+      warn(tripWhere,
+        `${key} has no update door in publish.mjs`,
+        "the instance knows this trip.md key, but publish.mjs's TRIP_UPDATE_DOORS " +
+        "(shared/tripFields.mjs) does not list it — editing it on a trip that already " +
+        "exists will be accepted here and never reach the site, the way teaser and " +
+        "cover once did. Add it there once publish.mjs can actually send it.");
+    }
 
     const data = trip.trip.data;
     if (data.id && data.id !== trip.id) error(tripWhere, `id is ${JSON.stringify(data.id)} but the folder is ${trip.id}`, "they must match");
