@@ -9,7 +9,26 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-export const DEFAULT_MAX_EDGE = 2000;
+/**
+ * The one size every derivative is built at — review page and published copy
+ * alike, because B646 says there is exactly one derivative and the test above
+ * this file checks it byte for byte.
+ *
+ * B1529: this was 2000, chosen to match what a Fernscout instance serves —
+ * which sounds right and is exactly backwards. The instance makes its own
+ * 2000px copy for the web and keeps what it is sent **untouched, as the print
+ * master**; `skill/ingest-photos.md` says so and then says "send the largest
+ * file you have". Baking to 2000 first saved nothing the server was not going
+ * to do anyway, and quietly made every photobook print from a web-sized file:
+ * about 170 dpi on an A4 plate, against the 300 the format is built for.
+ *
+ * 4000 clears the 2500×3500 a full-page plate wants at 300 dpi. It costs the
+ * review page some disk and a slower first run — the honest price of one
+ * derivative rather than two, and cheaper than a print nobody can redo.
+ * `--max-edge` overrides it; the instance's ceiling is 8000px and 50 MB an
+ * image, published in /api/health.
+ */
+export const DEFAULT_MAX_EDGE = 4000;
 
 // EXIF Orientation, turned into real pixels. The eight values are the standard
 // ones; sips rotates clockwise, and a flip has to come before the rotation.
@@ -51,7 +70,11 @@ export function ensureBaked(dir, photosDir, file, maxEdge = DEFAULT_MAX_EDGE) {
   if (existsSync(dest) && statSync(dest).mtimeMs >= statSync(src).mtimeMs) return dest;
   mkdirSync(dirname(dest), { recursive: true });
   copyFileSync(src, dest);
-  execFileSync("sips", ["-Z", String(maxEdge), dest], { stdio: "ignore" });
+  // `high` rather than sips' default: one flag, a few percent more bytes, and
+  // it is the difference between a photograph that survives being looked at
+  // full-screen and one that does not. The derivative is written once.
+  execFileSync("sips", ["-Z", String(maxEdge), "-s", "formatOptions", "high", dest],
+               { stdio: "ignore" });
   // A phone that was held sideways writes upright pixels plus an Orientation
   // tag saying how to turn them. Stripping the tag below would leave the
   // picture lying on its side for good, so the turn is baked into the pixels

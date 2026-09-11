@@ -118,9 +118,24 @@ node build.mjs --trip algarve-2026 --user severin
 ```
 
 One entry per day, in `content/<user>/trips/<trip>/`. Photographs are resized to
-2000px and **stripped of all metadata** — a phone writes the coordinates of
+**4000px** and **stripped of all metadata** — a phone writes the coordinates of
 somebody's front door into a file — with the coordinates kept in the frontmatter
 instead, where they can be seen and deleted. Photo notes become captions.
+
+**4000 and not 2000, deliberately.** A Fernscout instance makes its own 2000px
+copy for the web and keeps what you send **untouched, as the print master** —
+`https://fernscout.ch/skill/ingest-photos.md` says so, and then says *"send the
+largest file you have"*. Baking down to what the site happens to serve saves
+nothing and silently costs the photobook: a 2000px file prints an A4 plate at
+about 170 dpi, against the 300 it is built for. `--max-edge` overrides it; the
+instance's ceiling is 8000px and 50 MB an image, in `/api/health`. A trip of
+twenty-odd days lands around half a gigabyte.
+
+The review page is built at the same size, because B646 says there is exactly
+one derivative and the picture somebody approves has to be the picture that
+goes out — byte for byte, not merely similar. That costs the first review run
+some time and some disk in `export/<trip>/baked/`, which is the honest price of
+not having two resizes that can disagree.
 
 Anything held back on the review page is written as `visibility: "guest"` or
 `visibility: "private"` inside its gallery item. On a running site that photo
