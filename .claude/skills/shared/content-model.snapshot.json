@@ -1,6 +1,6 @@
 {
  "snapshotOf": "https://fernscout.ch",
- "snapshotTakenAt": "2026-09-06T18:58:58.198Z",
+ "snapshotTakenAt": "2026-09-11T19:42:19.241Z",
  "document": {
   "contentModel": 1,
   "files": {
@@ -29,7 +29,7 @@
    },
    "plan.md": {
     "what": "the planned route, for a trip that has not happened yet. Optional",
-    "api": "not over the API today — write the file",
+    "api": "GET/PUT /api/v1/{user}/trips/{trip}/plan",
     "optional": true
    }
   },
@@ -266,6 +266,13 @@
    },
    {
     "where": "trip.md",
+    "path": "teaser",
+    "assert": "type",
+    "type": "boolean",
+    "because": "a closed trip saying it exists; refused on a public trip, where `listed` is the gate"
+   },
+   {
+    "where": "trip.md",
     "path": "people",
     "assert": "type",
     "type": "array"
@@ -324,6 +331,7 @@
      "end",
      "tagline",
      "listed",
+     "teaser",
      "people",
      "travellers",
      "rates",
@@ -390,6 +398,13 @@
     "assert": "pattern",
     "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
     "expected": "24-hour, like 18:40"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "timezone",
+    "assert": "type",
+    "type": "string",
+    "because": "what 09:15 means — an IANA name like Asia/Bangkok, never an offset"
    },
    {
     "where": "entries/YYYY-MM-DD-slug.md",
@@ -538,14 +553,16 @@
    {
     "where": "entries/YYYY-MM-DD-slug.md",
     "path": "weather",
-    "assert": "never-in-file",
-    "because": "asks the server to look up what the weather was"
+    "assert": "type",
+    "type": "boolean",
+    "because": "the server's own lookup, once asked for — never an agent's belief"
    },
    {
     "where": "entries/YYYY-MM-DD-slug.md",
     "path": "weatherData",
-    "assert": "never-in-file",
-    "because": "a reading somebody actually took"
+    "assert": "type",
+    "type": "object",
+    "because": "a reading, from the server's lookup or handed over with its source — never invented, and never removed on the strength of a validator's own say-so that it looks invented"
    },
    {
     "where": "entries/YYYY-MM-DD-slug.md",
@@ -567,6 +584,12 @@
    },
    {
     "where": "entries/YYYY-MM-DD-slug.md",
+    "path": "dryRun",
+    "assert": "never-in-file",
+    "because": "checks the body and writes nothing — never a file's own field"
+   },
+   {
+    "where": "entries/YYYY-MM-DD-slug.md",
     "path": "test",
     "assert": "type",
     "type": "boolean"
@@ -580,6 +603,7 @@
      "date",
      "content",
      "time",
+     "timezone",
      "location",
      "country",
      "countryCode",
@@ -598,7 +622,10 @@
      "cover",
      "status",
      "slug",
-     "test"
+     "weather",
+     "weatherData",
+     "test",
+     "visibility"
     ]
    },
    {
@@ -655,6 +682,9 @@
      "push",
      "mail",
      "whatsapp",
+     "whatsappInbound",
+     "sms",
+     "smsInbound",
      "auth",
      "signup",
      "contacts",
@@ -664,7 +694,11 @@
      "credits",
      "addressLookup",
      "weather",
-     "analytics"
+     "analytics",
+     "helper",
+     "transcription",
+     "fulfilmentRelay",
+     "fulfilmentAccept"
     ]
    }
   ],
