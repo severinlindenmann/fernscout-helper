@@ -295,14 +295,28 @@ if (journal.config) {
       .filter(([, value]) => value && typeof value.enabled === "boolean")
       .map(([name, value]) => [name, value.enabled]),
   );
-  if (Object.keys(features).length) {
-    note(`  ${step(`set features — ${Object.entries(features).map(([k, v]) => `${k}=${v}`).join(", ")}`)}`);
-    if (!dry) {
+  const requestedFeatureKeys = Object.keys(features);
+  if (requestedFeatureKeys.length) {
+    if (dry) {
+      note(`  ${step(`set features — ${Object.entries(features).map(([k, v]) => `${k}=${v}`).join(", ")}`)}`);
+    } else {
       const patched = await call("PATCH", `/api/v1/${user}/config`, { body: { features } });
       // A capability this server cannot offer is refused, and that is a fact
       // about the server rather than a mistake in the folder: say it and go on.
       if (!patched.ok) {
         console.log(`      note: ${patched.body?.error ?? patched.status} — ${patched.body?.message ?? "features left as they were"}`);
+      } else {
+        // Print the server's own note verbatim (B1400) — it, not this
+        // script, knows which keys actually got written, and duplicating
+        // that wording here is the two-places-disagree problem. The note
+        // alone does not name *which* requested keys were left unapplied,
+        // so call those out separately.
+        const changedKeys = new Set(patched.body?.changed ?? []);
+        const unapplied = requestedFeatureKeys.filter((key) => !changedKeys.has(key));
+        note(`  ${step("set features")} — ${patched.body?.note ?? `changed: ${[...changedKeys].join(", ") || "none"}`}`);
+        if (unapplied.length) {
+          note(`      not applied: ${unapplied.join(", ")}`);
+        }
       }
     }
   }

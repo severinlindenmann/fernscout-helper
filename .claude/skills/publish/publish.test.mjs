@@ -22,6 +22,12 @@
 //                still print the whole plan (a 404 on GET …/days is an empty
 //                list, not a refusal), and `--dry-run --offline` must not
 //                make that request at all.
+//   b1400fix   — a journal asking for two features, where the server's PATCH
+//                comes back 200 having actually changed only one of them.
+//                Before B1400 the client printed "set features — a=true,
+//                b=true" from the request alone, never looking at the
+//                response, so a feature the server silently left alone still
+//                read as applied.
 import { createServer } from "node:http";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -54,6 +60,13 @@ write("b647legit", "solotrip", "2025-06-01-mittag.md", { title: "Mittag" });
 // b648fix: a trip the fake instance has never heard of.
 write("b648fix", "newtrip", "2026-01-01-ankunft.md", { title: "Ankunft" });
 
+// b1400fix: no trips at all — this scenario only exercises the config PATCH,
+// which happens before the per-trip loop.
+mkdirSync(join(CONTENT, "b1400fix"), { recursive: true });
+writeFileSync(join(CONTENT, "b1400fix", "config.json"), JSON.stringify({
+  features: { weather: { enabled: true }, costs: { enabled: true } },
+}));
+
 let created = 0;
 const routes = {
   "GET /api/health": () => [200, { media: {} }],
@@ -85,6 +98,15 @@ const routes = {
   "GET /api/v1/b648fix/status": () => [200, { trips: [] }],
   "GET /api/v1/b648fix/trips": () => [200, { trips: [] }],
   "GET /api/v1/b648fix/trips/newtrip/days": () => [404, { error: "unknown_trip" }],
+
+  "GET /api/v1/b1400fix/status": () => [200, { trips: [] }],
+  // The server actually wrote only "weather" — "costs" was asked for too but
+  // left as it was (say, already off at the instance's own ceiling).
+  "PATCH /api/v1/b1400fix/config": () => [200, {
+    ok: true, features: { weather: true }, changed: ["weather"],
+    note: "Changed: weather. This is what the journal asks for; the server is still the ceiling above it, and /api/health says what it provides.",
+  }],
+  "GET /api/v1/b1400fix/trips": () => [200, { trips: [] }],
 };
 
 const server = createServer(async (req, res) => {
@@ -174,6 +196,17 @@ const check = (label, ok, detail = "") => {
   check("B648: --dry-run --offline exits 0 without asking for the new trip's days",
     result.status === 0 && !result.requests.includes("GET /api/v1/b648fix/trips/newtrip/days"),
     result.requests.join(", "));
+}
+
+// ── B1400: a 200 with a partial `changed` must not read as "applied" ──────
+{
+  const result = await run("b1400fix", "no-such-trip");
+  check("B1400: the server's own note is printed, not a re-derived request echo",
+    /Changed: weather. This is what the journal asks for/.test(result.stdout), result.stdout);
+  check("B1400: a requested key absent from `changed` is called out by name",
+    /not applied: costs/.test(result.stdout), result.stdout);
+  check("B1400: a key the server did change is not also listed as unapplied",
+    !/not applied:.*weather/.test(result.stdout), result.stdout);
 }
 
 server.close();
