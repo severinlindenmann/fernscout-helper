@@ -55,7 +55,11 @@ const EXPECTED = [
   // shape but is not a real calendar date) and `costs.md`'s `budget.days: -3`
   // (present, but not positive) — rather than leaving them declared and
   // implemented with nothing in any fixture ever tripping them.
-  { user: "luecken", atLeast: 26, what: "one planted fault of each kind" },
+  // B1520: 26 -> 27. titleclash-a/titleclash-b share no filename and share
+  // no calendar date, but slug the same once the instance's own title rule
+  // is applied to both — the fault that used to surface at publish's step
+  // 50 of 52 instead of here.
+  { user: "luecken", atLeast: 27, what: "one planted fault of each kind" },
 ];
 
 const validate = join(ROOT, ".claude/skills/validate-content/validate.mjs");

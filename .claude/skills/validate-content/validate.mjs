@@ -22,6 +22,19 @@ import { arg, has } from "../shared/lib.mjs";
 import { crosscheck, resolveModel } from "../shared/contentModel.mjs";
 import { CONTENT, galleryFile, isJournalShaped, readJournal, suggestedContentDir, usernames } from "../shared/journal.mjs";
 import { deref, health, openapi, requestSchema } from "../shared/api.mjs";
+import { slugify as titleSlugify } from "../shared/slug.mjs";
+
+/** Great-circle distance in km, for comparing two days' coordinates (B1522). */
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const R = 6371;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
 
 const found = [];
 const say = (severity, where, message, fix, key) => found.push({ severity, where, message, fix, key });
@@ -419,6 +432,7 @@ function checkJournal(user, only) {
     }
 
     const slugs = new Map();
+    const titleSlugs = new Map();
     let daysWithCosts = 0;
     const covered = new Set();
     // Absent means every track on, which is the instance's default and the one
@@ -456,6 +470,23 @@ function checkJournal(user, only) {
       }
       if (slugs.has(entry.slug)) error(entryWhere, `two files share the slug ${entry.slug}`, `the other is ${slugs.get(entry.slug)}`);
       slugs.set(entry.slug, entry.file);
+
+      // B1520 — the instance derives a day's real slug from its TITLE, not
+      // from the filename above. Two files can carry distinct filenames and
+      // still collide once published, and that collision used to surface
+      // only at publish's step 50 of 52, after every photograph had already
+      // gone up. `titleSlugify` mirrors the instance's own rule (lib/slug.ts)
+      // rather than the filename it never sees.
+      if (typeof entry.data.title === "string" && entry.data.title) {
+        const titleSlug = titleSlugify(entry.data.title);
+        if (titleSlugs.has(titleSlug) && titleSlugs.get(titleSlug) !== entry.file) {
+          error(entryWhere, `title slugs the same as ${titleSlugs.get(titleSlug)} ("${titleSlug}")`,
+            "the instance derives a day's address from its title, and only one day can hold a " +
+            "slug within a trip — give this day a title that differs in a word");
+        } else {
+          titleSlugs.set(titleSlug, entry.file);
+        }
+      }
 
       const date = entry.data.date ?? entry.fileDate;
       if (date) {
@@ -586,6 +617,48 @@ function checkJournal(user, only) {
           }
         });
       }
+    }
+
+    // B1522 — a day whose coordinates are plainly far from the previous
+    // day's and names no transport draws no leg on the map, and until now
+    // the only signal was "transportMode is not set" sitting among 290 tips
+    // indistinguishable from every other unset field. Comparing consecutive
+    // days' coordinates is a cross-day, coordinates-and-files question —
+    // exactly the half AGENTS.md says the helper keeps for itself.
+    const MOVEMENT_WARN_KM = 5;
+    const dayPositions = [];
+    for (const entry of trip.entries) {
+      const date = entry.data.date ?? entry.fileDate;
+      if (!date || entry.data.lat === undefined || entry.data.lng === undefined) continue;
+      const last = dayPositions[dayPositions.length - 1];
+      if (last && last.date === date) continue; // a second entry on a day already recorded
+      dayPositions.push({
+        date,
+        lat: entry.data.lat,
+        lng: entry.data.lng,
+        entryWhere: `content/${user}/trips/${trip.id}/entries/${entry.file}`,
+        hasMode: entry.data.transportMode !== undefined,
+      });
+    }
+    for (let i = 1; i < dayPositions.length; i++) {
+      const prev = dayPositions[i - 1];
+      const cur = dayPositions[i];
+      const km = haversineKm(prev.lat, prev.lng, cur.lat, cur.lng);
+      if (km > MOVEMENT_WARN_KM && !cur.hasMode) {
+        warn(cur.entryWhere,
+          `${cur.date} is ${km.toFixed(1)} km from ${prev.date} and names no transport`,
+          "no leg is drawn between them — transportMode is read as the leg into the arriving " +
+          `day, so it belongs on ${cur.date}, not ${prev.date}`);
+      }
+    }
+    // travelScene is only actionable on a day that actually draws a leg — a
+    // tip to enable animation on a day with no transportMode is advice with
+    // nothing to act on.
+    for (let i = found.length - 1; i >= 0; i--) {
+      const f = found[i];
+      if (f.key !== "travelScene" || f.severity !== "tip") continue;
+      const entry = trip.entries.find((e) => `content/${user}/trips/${trip.id}/entries/${e.file}` === f.where);
+      if (entry && entry.data.transportMode === undefined) found.splice(i, 1);
     }
 
     if (trip.costs?.data?.budget && daysWithCosts === 0 && trip.entries.length > 0) {
