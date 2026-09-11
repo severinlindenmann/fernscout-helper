@@ -49,6 +49,12 @@ const only = arg("trip");
 const dry = has("dry-run");
 const offline = has("offline");
 const draftsOnly = has("drafts");
+// B1529 — this route matches an upload by basename, so a larger re-export of
+// a photo already sent under the same name was silently skipped, and the
+// only fix was 177 hand-driven DELETEs. `--replace-media` deletes the
+// remote copy first, by exact `src`, and re-sends the local file in its
+// place, rather than leaving it as though nothing had changed.
+const replaceMedia = has("replace-media");
 // The owner said the word for the whole trip, once — see AGENTS.md's "one
 // rule". Applied to every day that has lat/lng; a day with no coordinates
 // gets nothing rather than a guess, because the server has nothing to look up
@@ -399,29 +405,32 @@ for (const trip of journal.trips) {
       }
     }
 
-    // The fields with no door at all — B245, still open. Silence here is what
-    // B572 was: a `trip.md` edited after the first publish, and nothing
-    // saying so. This cannot write them, but it can say which of them differ
-    // from what the site already shows, so an operator finds out from this
-    // run rather than from the site looking wrong later.
+    // B1525/B245: these nine fields of an existing trip had no door until
+    // B622 (four), B245 (`cover`), B907 (`accent`, `costsVisibility`,
+    // `intro`) and B1496 (`translations`) — see PATCH .../trips/{trip} in
+    // the fernscout repo's openapi.ts. `cover` is the one exception: its
+    // value has to be a `src` the trip's gallery already carries, so it is
+    // sent later, once the day loop below has actually uploaded the
+    // photographs and knows each day's real slug (see the "cover" step at
+    // the end of the trip block).
     const detail = offline ? { ok: false } : await call("GET", `/api/v1/${user}/trips/${trip.id}`);
     if (detail.ok) {
       const live = detail.body ?? {};
-      const stale = [];
-      for (const key of ["title", "start", "end", "tagline", "accent", "translations", "cover"]) {
+      const patchBody = {};
+      for (const key of ["title", "start", "end", "tagline", "accent", "costsVisibility", "translations"]) {
         if (data[key] === undefined || data[key] === null) continue;
-        if (JSON.stringify(data[key]) !== JSON.stringify(live[key])) stale.push(key);
+        if (JSON.stringify(data[key]) !== JSON.stringify(live[key])) patchBody[key] = data[key];
       }
-      if (trip.trip?.body && trip.trip.body !== (live.intro ?? "")) stale.push("intro");
-      if (stale.length) {
-        console.log(
-          `  ⚠ ${stale.join(", ")} differ${stale.length === 1 ? "s" : ""} from what ${SITE} shows, ` +
-          `and there is no call that can change ${stale.length === 1 ? "it" : "them"} on an existing trip ` +
-          "(B245, in the fernscout repo, still open). Edit it there by hand for now.",
-        );
+      if (trip.trip?.body && trip.trip.body !== (live.intro ?? "")) patchBody.intro = trip.trip.body;
+      if (Object.keys(patchBody).length) {
+        note(`  ${step(`set ${Object.keys(patchBody).join(", ")}`)}`);
+        if (!dry) {
+          const patched = await call("PATCH", `/api/v1/${user}/trips/${trip.id}`, { body: patchBody });
+          if (!patched.ok) refuse(patched, `PATCH /api/v1/${user}/trips/${trip.id}`);
+        }
       }
     } else if (!offline) {
-      console.log(`      note: could not read the trip back to check title/start/end/tagline/accent/intro/translations/cover (${detail.status})`);
+      console.log(`      note: could not read the trip back to check title/start/end/tagline/accent/costsVisibility/intro/translations (${detail.status})`);
     }
   }
 
@@ -497,6 +506,14 @@ for (const trip of journal.trips) {
     const d = e.data.date ?? e.fileDate;
     localByDate.set(d, (localByDate.get(d) ?? 0) + 1);
   }
+  // B1525 — `cover:` in trip.md names a photo in *local* terms
+  // (`/media/<trip>/<local-folder>/<file>`, the folder the export wrote), and
+  // the instance's own gallery src is built from the day's *slug*
+  // (`/<user>/media/<trip>/<day-slug>/<file>`), which comes from the title
+  // and has no reason to agree with the local folder name. Filled in below,
+  // once each entry's real slug is known, so cover can be translated rather
+  // than sent verbatim.
+  const slugByFile = new Map();
 
   for (const entry of trip.entries) {
     const date = entry.data.date ?? entry.fileDate;
@@ -633,6 +650,7 @@ for (const trip of journal.trips) {
     // Never record a slug this run only guessed at — writing it back turns
     // one wrong match into a permanent one, repeated on every future run.
     if (!dry && slug && !guessed) recordSlug(entry, slug);
+    if (slug) slugByFile.set(entry.file, slug);
 
     // ── the photographs ────────────────────────────────────────────────────
     // The instance's own gallery is the record of what has been sent, so a
@@ -668,10 +686,31 @@ for (const trip of journal.trips) {
       }
     }
     const gallery = (there.ok ? (there.body?.entry?.gallery ?? there.body?.gallery) : null) ?? [];
-    const already_uploaded = new Set(gallery.map((item) => basename(String(item.src ?? ""))));
-    const pending = (entry.data.gallery ?? [])
+    const remoteByBasename = new Map(gallery.map((item) => [basename(String(item.src ?? "")), item]));
+    const local = (entry.data.gallery ?? [])
       .map((item) => ({ item, file: galleryFile(journal, trip, item.src) }))
-      .filter(({ item, file }) => file && !already_uploaded.has(basename(file)) && !String(item.src).startsWith("http"));
+      .filter(({ item, file }) => file && !String(item.src).startsWith("http"));
+
+    if (replaceMedia) {
+      // Delete first, by the remote's own `src` — never the local one, which
+      // is in local terms and may not even resemble what the instance holds.
+      const toReplace = local
+        .filter(({ file }) => remoteByBasename.has(basename(file)))
+        .map(({ file }) => remoteByBasename.get(basename(file)).src);
+      if (toReplace.length) {
+        note(`  ${step(`replace ${toReplace.length} photograph${toReplace.length === 1 ? "" : "s"} on ${slug}`)}`);
+        if (!dry) {
+          const deleted = await call("DELETE", `/api/v1/${user}/trips/${trip.id}/media`, {
+            body: { day: slug, src: toReplace },
+          });
+          if (!deleted.ok) refuse(deleted, `DELETE …/media (${slug})`);
+          for (const src of toReplace) remoteByBasename.delete(basename(src));
+        } else {
+          for (const src of toReplace) remoteByBasename.delete(basename(src));
+        }
+      }
+    }
+    const pending = local.filter(({ file }) => !remoteByBasename.has(basename(file)));
 
     if (pending.length) {
       // The instance's own whole-request ceiling, from /api/health, with a
@@ -711,6 +750,45 @@ for (const trip of journal.trips) {
         const live = await call("POST", `/api/v1/${user}/trips/${trip.id}/days/${slug}/publish`);
         // Already published is not a failure — this run is meant to be repeatable.
         if (!live.ok && live.status !== 409) refuse(live, `POST …/days/${slug}/publish`);
+      }
+    }
+  }
+
+  // ── cover ──────────────────────────────────────────────────────────────
+  // B1525/B245: last of the nine trip fields, and the one that cannot go
+  // out with the others above — its value has to be a `src` the trip's
+  // gallery already carries, which only exists once the loop above has run.
+  // `cover:` in trip.md is local (`/media/<trip>/<local-folder>/<file>`,
+  // named for wherever the export put the day's photos); the instance's src
+  // is `/<user>/media/<trip>/<day-slug>/<file>`, named for the day's title.
+  // The two folder names have no reason to agree, so this looks up which
+  // entry actually carries that local file and re-addresses it under that
+  // entry's real slug rather than sending the local value verbatim.
+  if (data.cover) {
+    const match = String(data.cover).match(/^\/media\/([^/]+)\/(.+)$/);
+    const owner = match && trip.entries.find((e) =>
+      (e.data.gallery ?? []).some((item) => item.src === data.cover));
+    if (!match) {
+      console.log(`  ⚠ cover ${JSON.stringify(data.cover)} is not a /media/<trip>/<folder>/<file> path — not sent`);
+    } else if (!owner) {
+      console.log(`  ⚠ cover ${data.cover} names no photograph in any of this trip's days — not sent`);
+    } else {
+      const slug = slugByFile.get(owner.file);
+      const basename = match[2].split("/").pop();
+      const resolvedCover = slug ? `/${user}/media/${trip.id}/${slug}/${basename}` : null;
+      if (!resolvedCover) {
+        console.log(`  ⚠ cover ${data.cover} belongs to ${owner.file}, but that day's slug is not known — not sent`);
+      } else {
+        const detail = offline ? { ok: false } : await call("GET", `/api/v1/${user}/trips/${trip.id}`);
+        if (!offline && detail.ok && detail.body?.cover === resolvedCover) {
+          // already set, nothing to do
+        } else {
+          note(`  ${step(`set cover — ${data.cover} → ${resolvedCover}`)}`);
+          if (!dry) {
+            const patched = await call("PATCH", `/api/v1/${user}/trips/${trip.id}`, { body: { cover: resolvedCover } });
+            if (!patched.ok) refuse(patched, `PATCH /api/v1/${user}/trips/${trip.id} (cover)`);
+          }
+        }
       }
     }
   }

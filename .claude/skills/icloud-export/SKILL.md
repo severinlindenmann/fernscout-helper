@@ -48,7 +48,7 @@ some, that is usually why — not an empty library.
 
 ## 2. Ask, before touching anything
 
-Four questions. Ask them together, in the person's own language:
+Five questions. Ask them together, in the person's own language:
 
 | Ask | Why it matters |
 | --- | --- |
@@ -56,6 +56,7 @@ Four questions. Ask them together, in the person's own language:
 | **What is the trip called?** | Becomes the folder and the URL: lowercase, dashes, `algarve-2026` ages better than `holiday`. |
 | **Is there an album?** | `--album "Algarve"` is more precise than dates when they made one. Dates alone are fine. |
 | **All photos, or only the good ones?** | `--favourites` takes only hearted ones; `--top 15` takes every favourite plus the best-scoring rest, up to fifteen a day. Nothing takes everything. |
+| **Who else was on this trip?** | Their name, and — only if they want that person to be able to write to the trip — an address. `people:` is the byline *and* write access, so a name with the wrong address is worse than a name not listed yet; **never infer one**, including from a face you recognise in the photographs. Asked here, not at the end (step 7), because the answer shapes `travellers:` at build time and a person looking at their own holiday photographs still remembers who was there. |
 
 Photos scores its own pictures for composition and exposure, which is what
 `--top` sorts by. It is a decent first pass and it is not taste — say so, and say
@@ -167,6 +168,9 @@ end: "2026-07-01"
 status: current
 accent: sky                 # sky | yellow | green | coral | navy
 visibility: private         # private | public | guest — start closed
+people:                     # everyone step 2 named, however many that is
+  - name: "Their name"
+    email: "only if they gave one — write access, so never guess it"
 ---
 
 A paragraph about what this trip was, from what they told you.
@@ -174,6 +178,14 @@ A paragraph about what this trip was, from what they told you.
 
 `private` means the people who were there. Never widen it without being asked,
 and never write a `passwordHash:` line.
+
+Leave `people:` off entirely if step 2's answer was just the person you are
+talking to — a byline of one is not a fault. If they named someone with an
+address, carry that same person into `travellers[].for` when you build the
+figures below, so their figure is tied to them rather than left an anonymous
+shape; a name with no address gets no `for:`, since that field is drawn from
+`people:` and an inferred one is exactly the address this rule exists to keep
+out.
 
 A **photograph's** own label is the narrower version of the same idea, and it
 only ever narrows: a `guest` photo inside a `private` trip stays private,
