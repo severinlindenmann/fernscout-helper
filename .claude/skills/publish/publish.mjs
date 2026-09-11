@@ -335,8 +335,9 @@ for (const trip of journal.trips) {
   if (!existing.has(trip.id)) {
     // Everything trip.md carries, in one call. The body is the intro.
     const body = { id: trip.id, title: data.title, start: data.start, end: data.end };
-    for (const key of ["tagline", "status", "accent", "visibility", "listed", "costsVisibility",
-                       "test", "people", "travellers", "rates", "tracks", "translations"]) {
+    for (const key of ["tagline", "status", "accent", "visibility", "listed", "teaser",
+                       "costsVisibility", "test", "people", "travellers", "rates", "tracks",
+                       "translations"]) {
       if (data[key] !== undefined && data[key] !== null) body[key] = data[key];
     }
     if (trip.trip?.body) body.intro = trip.trip.body;
@@ -348,10 +349,16 @@ for (const trip of journal.trips) {
   } else {
     note("  trip is already there");
     // The one-field doors, for a trip that existed before this run.
-    if (data.visibility !== undefined || data.listed !== undefined) {
+    // B1518: `teaser` rides the same door as visibility and listed, and was
+    // missing from both this list and the create call above — so a trip.md
+    // asking for a locked card on /<user>/trips was accepted by validate,
+    // published without a word, and never appeared. A field these tools drop
+    // in silence is worse than one they refuse.
+    if (data.visibility !== undefined || data.listed !== undefined || data.teaser !== undefined) {
       const body = {};
       if (data.visibility !== undefined) body.visibility = data.visibility;
       if (data.listed !== undefined) body.listed = data.listed;
+      if (data.teaser !== undefined) body.teaser = data.teaser;
       note(`  ${step(`set visibility ${JSON.stringify(body)}`)}`);
       if (!dry) {
         const patched = await call("PATCH", `/api/v1/${user}/trips/${trip.id}/visibility`, { body });
