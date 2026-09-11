@@ -1,6 +1,6 @@
 {
  "snapshotOf": "https://fernscout.ch",
- "snapshotTakenAt": "2026-09-11T19:42:19.241Z",
+ "snapshotTakenAt": "2026-09-11T21:38:55.239Z",
  "document": {
   "contentModel": 1,
   "files": {
@@ -137,14 +137,7 @@
     "where": "config.json",
     "path": "travellers",
     "assert": "type",
-    "type": "array",
-    "because": "how the walking figures are drawn when a trip does not say. There is no API call for the journal's default party — it is read from this file, and a trip's own travellers: block is set through …/trips/<trip>/travellers"
-   },
-   {
-    "where": "config.json",
-    "path": "travellers",
-    "assert": "never-over-api",
-    "because": "how the walking figures are drawn when a trip does not say. There is no API call for the journal's default party — it is read from this file, and a trip's own travellers: block is set through …/trips/<trip>/travellers"
+    "type": "array"
    },
    {
     "where": "config.json",
