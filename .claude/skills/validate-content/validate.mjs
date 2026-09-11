@@ -17,10 +17,10 @@
 // what it finds is a question for a person ("no costs on seven days"), and an
 // agent that quietly fixed those would be inventing what happened.
 import { existsSync, statSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import { arg, has } from "../shared/lib.mjs";
 import { crosscheck, resolveModel } from "../shared/contentModel.mjs";
-import { galleryFile, readJournal, usernames } from "../shared/journal.mjs";
+import { CONTENT, galleryFile, isJournalShaped, readJournal, suggestedContentDir, usernames } from "../shared/journal.mjs";
 import { deref, health, openapi, requestSchema } from "../shared/api.mjs";
 
 const found = [];
@@ -609,10 +609,30 @@ function checkJournal(user, only) {
 
 // ── run ────────────────────────────────────────────────────────────────────
 const only = arg("trip");
-const users = arg("user") ? [arg("user")] : usernames();
+const namedUser = arg("user");
+const users = namedUser ? [namedUser] : usernames();
 if (users.length === 0) {
   console.error("Nothing in content/ to check. A journal lives at content/<username>/.");
   process.exit(1);
+}
+
+// B1402 — CONTENT held *something*, so the check above never fired, but
+// none of it looked like a journal: readJournal() would report every one
+// of these as "has no config.json", which is technically true and useless
+// when the real cause is that CONTENT is pointed at the wrong depth. Only
+// for an auto-discovered listing — an explicit --user names a journal by
+// hand, and that refusal (or lack of one) is its own, unrelated to depth.
+if (!namedUser && !users.some((user) => isJournalShaped(join(CONTENT, user)))) {
+  const likely = suggestedContentDir();
+  if (likely) {
+    console.error(
+      `Nothing that looks like a journal directly under ${CONTENT} — found ${users.join(", ")}, ` +
+      "none with both a config.json and a trips/ directory.\n" +
+      `${likely} looks like the journal directory this was meant to point at. Point ` +
+      "FERNSCOUT_CONTENT_DIR there, or run this from a checkout where content/ already is.",
+    );
+    process.exit(1);
+  }
 }
 
 let LIMITS = {};

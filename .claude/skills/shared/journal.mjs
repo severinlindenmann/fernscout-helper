@@ -5,7 +5,7 @@
 // with it and `publish.mjs` sends it. Two readers would have drifted; this is
 // the one.
 import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { ROOT } from "./lib.mjs";
 import { parseFrontmatter } from "./frontmatter.mjs";
 
@@ -24,6 +24,49 @@ export function usernames() {
   return readdirSync(CONTENT).filter(
     (name) => !name.startsWith(".") && statSync(join(CONTENT, name)).isDirectory(),
   );
+}
+
+/** A real journal on disk has both — a `config.json` and a `trips/`
+ * directory. B1402: the marker two other checks already use (validate.mjs's
+ * own "has no config.json" error, and its trip loop), pulled out once so the
+ * "did you mean" heuristic below cannot drift from what "is a journal"
+ * means anywhere else in these tools. `usernames()` itself stays as
+ * permissive as before — a brand new journal with no trips/ yet is still a
+ * real username — this is only for telling "CONTENT holds journals" apart
+ * from "CONTENT holds nothing of the kind".
+ */
+export function isJournalShaped(dir) {
+  return existsSync(join(dir, "config.json")) &&
+    existsSync(join(dir, "trips")) && statSync(join(dir, "trips")).isDirectory();
+}
+
+/**
+ * When nothing directly under CONTENT looks like a journal, the likely story
+ * is almost always a path that is one level off, in one direction or the
+ * other:
+ *
+ *   - too shallow — pointed at the folder *above* where the journals live,
+ *     so what CONTENT actually holds is one directory (often "content"
+ *     itself) that in turn holds the real usernames.
+ *   - too deep (the mirror case, B1402) — pointed at one journal's own
+ *     folder, so CONTENT itself is what looks like a journal.
+ *
+ * Named by finding an actual journal-shaped directory nearby rather than
+ * guessed at from a hardcoded basename like "content" — a person's own
+ * layout does not have to be called that for this to still work. `null`
+ * when neither holds, which leaves the caller to say what it already says
+ * today.
+ */
+export function suggestedContentDir() {
+  if (isJournalShaped(CONTENT)) return dirname(CONTENT);
+  for (const name of usernames()) {
+    const at = join(CONTENT, name);
+    const inside = existsSync(at) && readdirSync(at).some(
+      (child) => !child.startsWith(".") && statSync(join(at, child)).isDirectory() && isJournalShaped(join(at, child)),
+    );
+    if (inside) return at;
+  }
+  return null;
 }
 
 function readMarkdown(path) {

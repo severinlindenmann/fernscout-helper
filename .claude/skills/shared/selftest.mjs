@@ -204,6 +204,15 @@ try {
   frontmatterFailed = 1;
 }
 
+// B1402: a CONTENT dir pointed one level too shallow, or too deep, gets a
+// "did you mean" naming an actual journal-shaped directory nearby.
+let journalFailed = 0;
+try {
+  execFileSync(process.execPath, [join(ROOT, ".claude/skills/shared/journal.test.mjs")], { stdio: "inherit" });
+} catch {
+  journalFailed = 1;
+}
+
 // B645: a real photograph through build.mjs, checked afterwards — the one
 // part of this repository that transforms somebody's own files, and the one
 // part nothing here used to run at all.
@@ -232,5 +241,6 @@ try {
 
 process.exit(
   failed > 0 || missing > 0 || apiOnlyFailed > 0 || snapshotFailed > 0 ||
-  publishFailed > 0 || frontmatterFailed > 0 || buildFailed > 0 || reviewFailed > 0 || metadataFailed > 0 ? 1 : 0,
+  publishFailed > 0 || frontmatterFailed > 0 || journalFailed > 0 ||
+  buildFailed > 0 || reviewFailed > 0 || metadataFailed > 0 ? 1 : 0,
 );
