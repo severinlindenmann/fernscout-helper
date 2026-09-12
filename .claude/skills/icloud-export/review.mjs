@@ -243,8 +243,8 @@ createServer(async (req, res) => {
       .pipe(res.writeHead(200, { "content-type": "image/jpeg", "cache-control": "max-age=86400" }));
   }
   res.writeHead(404).end();
-}).listen(PORT, () => {
-  const at = `http://localhost:${PORT}`;
+}).listen(PORT, "127.0.0.1", () => {
+  const at = `http://127.0.0.1:${PORT}`;
   console.log(`${photos.length} photos → ${at}`);
   try { execFileSync("open", [at]) } catch {}
 });
