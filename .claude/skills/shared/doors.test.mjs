@@ -58,17 +58,23 @@ test("config.json: every key is accounted for, so the guard is quiet today", () 
   );
 });
 
-test("a day: the three B1578 names are exactly what is still unaccounted for", () => {
-  // Pinned rather than left implicit. `timezone`, `weatherData` and
-  // `visibility` are all in the instance's EDITABLE_DAY_FIELDS and none of
-  // them has ever been sent — found by this guard's own first run. When
-  // B1578 fixes them this test is what says so.
+test("a day: nothing the instance knows is unaccounted for any more — B1578", () => {
+  // This test used to pin three keys as *missing*: `timezone`, `weatherData`
+  // and `visibility` were all in the instance's EDITABLE_DAY_FIELDS and none
+  // had ever been sent, found by this guard's own first run. B1578 added them,
+  // and this is the assertion turning over to say so.
   const model = keys(...DAY_UPDATE_DOORS, ...Object.keys(DAY_DEDICATED_DOORS),
                      "timezone", "weatherData", "visibility");
-  assert.deepEqual(
-    unaccountedKeys(model, DAY_UPDATE_DOORS, DAY_DEDICATED_DOORS).sort(),
-    ["timezone", "visibility", "weatherData"],
-  );
+  assert.deepEqual(unaccountedKeys(model, DAY_UPDATE_DOORS, DAY_DEDICATED_DOORS), []);
+});
+
+test("the three B1578 added are sent, not merely accounted for", () => {
+  // A key moved into DAY_DEDICATED_DOORS would satisfy the test above while
+  // still never travelling, which is the shape of a fix that quiets a guard
+  // without fixing anything. These three have to be on the wire.
+  for (const key of ["timezone", "visibility", "weatherData"]) {
+    assert.ok(DAY_UPDATE_DOORS.includes(key), `${key} must be sent, not explained away`);
+  }
 });
 
 console.log(failures ? `\n${failures} failed` : "\nall passed");

@@ -24,6 +24,20 @@ paths, which narrows a run to the files that actually differ instead of
 re-`PATCH`ing fourteen days to correct one. Nothing about running `publish` by
 hand changed; without `--changed` it walks everything exactly as before.
 
+**A day's `timezone`, `visibility` and `weatherData` go out too** (B1578) —
+all three were accepted by the instance and had never been sent, so a day
+carrying one validated cleanly and left the value on the laptop. `weatherData`
+is the one that mattered: it is the sanctioned route for a reading somebody's
+own instrument or weather service produced, and it was being dropped in
+silence.
+
+One exception, and it is not a gap: **a reading whose source is `open-meteo`
+is skipped**, and the run says so. That is this server's own lookup written
+into the file, only a server may claim that name, and sending it back is
+refused — so a run that forwarded every `weatherData` it found would fail on
+every day the archive had ever answered for. Ask the new instance for its own
+lookup with `--weather` instead.
+
 **Three `config.json` fields are never sent, and every run now says so** —
 `owner.email`, `baseCurrency` and `media`, each refused by the instance for its
 own reason (B1504). Two of them are read back from the site, so a run names them
