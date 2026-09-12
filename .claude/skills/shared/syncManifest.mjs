@@ -134,38 +134,48 @@ export function writeBase(dir, { site, user, files, syncedAt }) {
  * manifest exists at all: without it, "we differ" and "you changed it" are the
  * same observation.
  *
+ * **A base entry remembers both sides**: `hash` is what this folder held at
+ * the last sync and `remote` is what the site held. One hash for both was the
+ * obvious version and it does not survive a real push — the up leg goes
+ * through typed routes that normalise what they are given (frontmatter key
+ * order, a slug the instance assigns), so a file that landed perfectly is
+ * *not* byte-identical to the one that was sent. With one hash, every
+ * successful push left the two sides permanently differing and the next run
+ * called it a conflict. Asking "did each side move from where it was" instead
+ * of "do the two agree" is what makes normalisation invisible, which is what
+ * it should be.
+ *
  * Actions: `pull`, `push`, `conflict`, `delete-remote`, `delete-local`.
  * A path with nothing to do does not appear.
- *
- * `remote` and `local` are `{ path: { size, hash } }`; `base` is the same,
- * possibly with an `mtimeMs` this ignores.
  */
 export function plan({ base, local, remote }) {
   const actions = [];
   const paths = [...new Set([...Object.keys(base), ...Object.keys(local), ...Object.keys(remote)])].sort();
 
   for (const path of paths) {
-    const b = base[path]?.hash ?? null;
     const l = local[path]?.hash ?? null;
     const r = remote[path]?.hash ?? null;
+    if (l === null && r === null) continue;   // gone from both; only base remembers it
 
-    if (l === r) continue;                       // both sides agree; base is irrelevant
-    if (l === null && r === null) continue;      // gone from both; only base remembers it
-
-    if (b === null) {
-      // Never synced. One side has it and the other does not — or, if both
-      // have it with different bytes, two people wrote the same path
-      // independently and neither is the base for the other.
+    const b = base[path];
+    if (!b) {
+      // Never synced. One side has it and the other does not — or both wrote
+      // the same path independently and neither is the base for the other.
       if (l !== null && r === null) actions.push({ path, action: "push", reason: "new locally" });
       else if (l === null && r !== null) actions.push({ path, action: "pull", reason: "new on the site" });
-      else actions.push({ path, action: "conflict", reason: "written on both sides, never synced" });
+      else if (l !== r) actions.push({ path, action: "conflict", reason: "written on both sides, never synced" });
       continue;
     }
 
-    const localMoved = l !== b;
-    const remoteMoved = r !== b;
+    const localMoved = l !== b.hash;
+    const remoteMoved = r !== (b.remote ?? b.hash);
+    // Neither side moved. They may still differ in bytes — that is the
+    // normalisation a push leaves behind — and there is nothing to do about
+    // it, which is the whole point of recording both.
+    if (!localMoved && !remoteMoved) continue;
 
     if (localMoved && remoteMoved) {
+      if (l === r) continue;   // both arrived at the same bytes; agreement is agreement
       actions.push({ path, action: "conflict", reason: "changed on both sides since the last sync" });
     } else if (remoteMoved) {
       actions.push(r === null

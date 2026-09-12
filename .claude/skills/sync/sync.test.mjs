@@ -109,6 +109,34 @@ test("a local-only file is a push, not a conflict", () => {
   assert.deepEqual(only(actions, "conflict"), []);
 });
 
+test("a push the instance normalised is not a conflict on the next run", () => {
+  // The one a real drive caught. The up leg goes through typed routes that
+  // rewrite what they are given — frontmatter key order, a slug the instance
+  // assigns — so a day that landed perfectly comes back with different bytes.
+  // With one hash per base entry that is "both sides changed" forever, and
+  // every successful push poisoned the file it pushed.
+  const base = { a: { hash: "local-2", remote: "server-normalised-2" } };
+  assert.deepEqual(plan({ base, local: { a: at("local-2") }, remote: { a: at("server-normalised-2") } }), []);
+  // And a genuine edit on top of that still reads as a push, not a conflict.
+  const after = plan({ base, local: { a: at("local-3") }, remote: { a: at("server-normalised-2") } });
+  assert.deepEqual(only(after, "push"), ["a"]);
+  assert.deepEqual(only(after, "conflict"), []);
+});
+
+test("an unpushed local edit is still a push on the next run, and the one after", () => {
+  // The base is the last point the two sides *agreed*, not what they agree on
+  // right now — and rebuilding it the second way is the obvious version and
+  // is wrong. Caught on a real drive: edit a day locally, do not push it, and
+  // the file drops out of the base, so the next run cannot tell "you changed
+  // it" from "we differ" and calls a plain push a conflict.
+  const base = { a: { hash: "1", remote: "1" } }, local = { a: at("2") }, remote = { a: at("1") };
+  for (const _ of [1, 2, 3]) {
+    const actions = plan({ base, local, remote });
+    assert.deepEqual(only(actions, "push"), ["a"]);
+    assert.deepEqual(only(actions, "conflict"), []);
+  }
+});
+
 test("a file new on both sides, never synced, is a conflict", () => {
   const actions = plan({ base: {}, local: { a: at("1") }, remote: { a: at("2") } });
   assert.deepEqual(only(actions, "conflict"), ["a"]);

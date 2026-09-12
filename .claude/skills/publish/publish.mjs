@@ -90,6 +90,8 @@ const changedUnder = (prefix) => {
   for (const path of changed) if (path.startsWith(prefix)) return true;
   return false;
 };
+/** One named file of a trip, or "everything" when nothing is narrowing. */
+const changedIs = (path) => !changed || changed.has(path);
 
 if (!user) {
   console.error("Which journal? node publish.mjs --user <username>");
@@ -313,7 +315,7 @@ note(`journal ${user} exists — ${status.body?.trips?.length ?? "?"} trips alre
  * profile field — deliberately, so "turn mail off" cannot also rename the
  * journal by accident.
  */
-if (journal.config) {
+if (journal.config && changedIs("config.json")) {
   /**
    * Three fields of config.json have no door, and saying nothing about them
    * is a lie of omission — B1504.
@@ -342,10 +344,10 @@ if (journal.config) {
   const noDoor = Object.keys(JOURNAL_NO_UPDATE_DOOR).filter((key) => journal.config[key] !== undefined);
   if (noDoor.length) {
     console.log(
-      `  note: ${noDoor.join(", ")} ${noDoor.length === 1 ? "has" : "have"} no door and ` +
-      `${noDoor.length === 1 ? "was" : "were"} not sent — ` +
-      noDoor.map((key) => `${key}: ${JOURNAL_NO_UPDATE_DOOR[key]}`).join(" "),
+      `  note: ${noDoor.length === 1 ? "one field" : `${noDoor.length} fields`} of config.json ` +
+      `${noDoor.length === 1 ? "has" : "have"} no door and ${noDoor.length === 1 ? "was" : "were"} not sent:`,
     );
+    for (const key of noDoor) console.log(`        ${key} — ${JOURNAL_NO_UPDATE_DOOR[key]}`);
   }
   const live = offline ? { ok: false } : await call("GET", `/api/v1/${user}/config`);
   if (live.ok) {
@@ -354,11 +356,8 @@ if (journal.config) {
       const there = live.body?.journal?.[key];
       if (here === undefined || there === undefined) continue;
       if (JSON.stringify(here) === JSON.stringify(there)) continue;
-      console.log(
-        `  warn: ${key} here is ${JSON.stringify(here)}, the site is running ` +
-        `${JSON.stringify(there)}. This run did not change it and no run can — ` +
-        `${JOURNAL_NO_UPDATE_DOOR[key]}`,
-      );
+      console.log(`  warn: ${key} here is ${JSON.stringify(here)}, the site is running ${JSON.stringify(there)}.`);
+      console.log(`        This run did not change it and no run can — ${JOURNAL_NO_UPDATE_DOOR[key]}`);
     }
   }
 
@@ -451,7 +450,17 @@ for (const trip of journal.trips) {
     // asking for a locked card on /<user>/trips was accepted by validate,
     // published without a word, and never appeared. A field these tools drop
     // in silence is worse than one they refuse.
-    if (data.visibility !== undefined || data.listed !== undefined || data.teaser !== undefined) {
+    // Everything from here to the end of this block is read out of `trip.md`,
+    // so a run narrowed by `--changed` skips the lot when that file did not
+    // move: re-`PATCH`ing a trip's visibility, rates and party to correct one
+    // day is exactly the waste the narrowing exists to stop. It also repairs
+    // a regression the narrowing itself caused — `cover:` is resolved through
+    // the days' real slugs, which a narrowed run has not learned, so the
+    // cover step warned "that day's slug is not known" on every run. A trip
+    // whose `trip.md` is unchanged has an unchanged `cover:`, and there was
+    // never anything to send.
+    if (changedIs(`trips/${trip.id}/trip.md`) &&
+        (data.visibility !== undefined || data.listed !== undefined || data.teaser !== undefined)) {
       const body = {};
       if (data.visibility !== undefined) body.visibility = data.visibility;
       if (data.listed !== undefined) body.listed = data.listed;
@@ -462,7 +471,7 @@ for (const trip of journal.trips) {
         if (!patched.ok) refuse(patched, `PATCH …/${trip.id}/visibility`);
       }
     }
-    if (data.rates && Object.keys(data.rates).length) {
+    if (changedIs(`trips/${trip.id}/trip.md`) && data.rates && Object.keys(data.rates).length) {
       note(`  ${step("set the trip's rates")}`);
       if (!dry) {
         const patched = await call("PATCH", `/api/v1/${user}/trips/${trip.id}/rates`, { body: { rates: data.rates } });
@@ -474,21 +483,21 @@ for (const trip of journal.trips) {
     // edited trip.md said nothing had changed as long as the trip itself was
     // already there. "trip is already there" is not "trip.md has nothing left
     // to send".
-    if (data.people && data.people.length) {
+    if (changedIs(`trips/${trip.id}/trip.md`) && data.people && data.people.length) {
       note(`  ${step("set the trip's people")}`);
       if (!dry) {
         const patched = await call("PATCH", `/api/v1/${user}/trips/${trip.id}/people`, { body: { people: data.people } });
         if (!patched.ok) refuse(patched, `PATCH …/${trip.id}/people`);
       }
     }
-    if (data.travellers && data.travellers.length) {
+    if (changedIs(`trips/${trip.id}/trip.md`) && data.travellers && data.travellers.length) {
       note(`  ${step("set the trip's travellers")}`);
       if (!dry) {
         const patched = await call("PATCH", `/api/v1/${user}/trips/${trip.id}/travellers`, { body: { travellers: data.travellers } });
         if (!patched.ok) refuse(patched, `PATCH …/${trip.id}/travellers`);
       }
     }
-    if (data.tracks && Object.keys(data.tracks).length) {
+    if (changedIs(`trips/${trip.id}/trip.md`) && data.tracks && Object.keys(data.tracks).length) {
       note(`  ${step("set what the trip tracks")}`);
       if (!dry) {
         const patched = await call("PATCH", `/api/v1/${user}/trips/${trip.id}/tracks`, { body: { tracks: data.tracks } });
@@ -504,7 +513,9 @@ for (const trip of journal.trips) {
     // sent later, once the day loop below has actually uploaded the
     // photographs and knows each day's real slug (see the "cover" step at
     // the end of the trip block).
-    const detail = offline ? { ok: false } : await call("GET", `/api/v1/${user}/trips/${trip.id}`);
+    const detail = offline || !changedIs(`trips/${trip.id}/trip.md`)
+      ? { ok: false, skipped: true }
+      : await call("GET", `/api/v1/${user}/trips/${trip.id}`);
     if (detail.ok) {
       const live = detail.body ?? {};
       const patchBody = {};
@@ -520,13 +531,15 @@ for (const trip of journal.trips) {
           if (!patched.ok) refuse(patched, `PATCH /api/v1/${user}/trips/${trip.id}`);
         }
       }
-    } else if (!offline) {
+    } else if (!offline && !detail.skipped) {
+      // `skipped` is a narrowed run that never asked, which is not a failure
+      // to read the trip back and must not be reported as one.
       console.log(`      note: could not read the trip back to check ${TRIP_GENERAL_PATCH_KEYS.join("/")}/intro (${detail.status})`);
     }
   }
 
   // ── the budget and the costs paid before leaving ─────────────────────────
-  if (trip.costs) {
+  if (trip.costs && changedIs(`trips/${trip.id}/costs.md`)) {
     const body = {};
     if (trip.costs.data.budget) body.budget = trip.costs.data.budget;
     if (trip.costs.data.costs) body.costs = trip.costs.data.costs;
@@ -866,7 +879,7 @@ for (const trip of journal.trips) {
   // The two folder names have no reason to agree, so this looks up which
   // entry actually carries that local file and re-addresses it under that
   // entry's real slug rather than sending the local value verbatim.
-  if (data.cover) {
+  if (data.cover && changedIs(`trips/${trip.id}/trip.md`)) {
     const match = String(data.cover).match(/^\/media\/([^/]+)\/(.+)$/);
     const owner = match && trip.entries.find((e) =>
       (e.data.gallery ?? []).some((item) => item.src === data.cover));

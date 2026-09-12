@@ -118,7 +118,10 @@ console.log(
   (base.fresh ? ", no previous sync" : `, last synced ${base.syncedAt ?? "at some point"}`),
 );
 if (omitted.files) {
-  console.log(`  ${omitted.files} original${omitted.files === 1 ? "" : "s"} (${bytes(omitted.bytes)}) stay on the server and are not in this sync.`);
+  console.log(
+    `  ${omitted.files} original${omitted.files === 1 ? "" : "s"} (${bytes(omitted.bytes)}) ` +
+    `${omitted.files === 1 ? "stays" : "stay"} on the server and ${omitted.files === 1 ? "is" : "are"} not in this sync.`,
+  );
 }
 
 // ── conflicts ──────────────────────────────────────────────────────────────
@@ -237,8 +240,16 @@ if (direction === "down") {
      */
     const changedAt = join(dir, ".fernscout-sync-changed.json");
     writeFileSync(changedAt, JSON.stringify(pushes.map((a) => a.path)));
+    // Publish's own flags, passed through rather than re-invented — `--drafts`
+    // above all, which is the difference between writing the days and putting
+    // them on the site, and is a person's word either way.
+    const passed = ["drafts", "weather", "replace-media", "skip-validate"].filter(has).map((f) => `--${f}`);
+    const trip = arg("trip");
     try {
-      execFileSync(process.execPath, [join(HERE, "../publish/publish.mjs"), "--user", user, "--changed", changedAt], { stdio: "inherit" });
+      execFileSync(process.execPath, [
+        join(HERE, "../publish/publish.mjs"), "--user", user, "--changed", changedAt,
+        ...(trip ? ["--trip", trip] : []), ...passed,
+      ], { stdio: "inherit" });
     } catch {
       die("\npublish reported a problem, above. What already landed stays; the sync state was not updated,\nso running this again picks up from where it stopped.");
     } finally {
@@ -261,12 +272,28 @@ if (!after.ok) {
 }
 const settled = Object.fromEntries((after.body.files ?? []).map((f) => [f.path, { size: f.size, hash: f.hash }]));
 const here = localManifest(dir, base.files);
-const files = {};
-for (const path of Object.keys(here)) {
-  // Only what both sides now agree on is a base. A file they still differ on
-  // has not been synced, whatever this run did, and recording it as a base
-  // would turn the next honest difference into an invisible one.
-  if (settled[path] && settled[path].hash === here[path].hash) files[path] = here[path];
+/**
+ * What to remember, and what to leave alone.
+ *
+ * A base entry records **both sides** — what this folder held and what the
+ * site held — because the up leg goes through typed routes that normalise
+ * what they are given, so a file that landed perfectly is not byte-identical
+ * to the one that was sent. Recording one hash made every successful push
+ * into a permanent conflict; a real drive is what found that.
+ *
+ * Only paths this run actually settled are written: the ones it moved, and
+ * the ones it found nothing to do about. A path still carrying a pending
+ * action — a conflict, a local edit the down leg did not push, a deletion
+ * nobody confirmed — keeps its previous entry, because recording it now would
+ * quietly declare the pending thing done.
+ */
+const pending = new Set(actions.map((a) => a.path));
+const moved = new Set(moving.map((a) => a.path));
+const files = { ...base.files };
+for (const path of new Set([...Object.keys(here), ...Object.keys(settled)])) {
+  if (pending.has(path) && !moved.has(path)) continue;
+  if (!here[path] || !settled[path]) { delete files[path]; continue; }
+  files[path] = { ...here[path], remote: settled[path].hash };
 }
 writeBase(dir, { site: SITE, user, files, syncedAt: new Date().toISOString() });
 console.log(`Sync state written — ${Object.keys(files).length} file${Object.keys(files).length === 1 ? "" : "s"} both sides agree on.`);
