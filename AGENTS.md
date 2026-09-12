@@ -21,6 +21,7 @@ running it.
 | "add the budget", "what did the trip cost", "I paid for the flights" | `trip-budget` |
 | "check my journal", "is this right", "did I forget anything", "what else can I set" | `validate-content` |
 | "publish", "put it online", "upload my journal", "sync the trip" | `publish` |
+| "sync my journal", "get the newest version down", "I edited a day on the site" | `sync` |
 
 **Read the skill's `SKILL.md` before running anything.** It carries the order of
 the commands, the questions to ask, and — this matters more than it sounds —
@@ -115,6 +116,9 @@ there is any doubt about whether they meant the website or just the file.
                              to the committed content-model.snapshot.json only when the
                              instance cannot be reached) · snapshot.mjs (refreshes that
                              snapshot from a real instance; never hand-edit the JSON) ·
+                             journalFields.mjs (which config.json keys have a door, and
+                             which three never do) · syncManifest.mjs (the local walk, the
+                             hash the instance uses, and the three-way compare) ·
                              pattern.mjs (a `pattern` rule, matched without ever handing
                              an untrusted regex to RegExp) · journal.mjs (a folder,
                              parsed) · api.mjs · selftest.mjs (do these tools still agree
