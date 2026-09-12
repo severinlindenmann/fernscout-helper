@@ -65,25 +65,36 @@ export const DAY_DEDICATED_DOORS = {
 };
 
 /**
- * Weather sources only this server may claim — `RESERVED_SOURCES` in the
- * instance's `lib/weather.ts`.
+ * Weather sources only this server may claim — read from the instance, not
+ * kept here.
  *
- * Hardcoded here **because the instance does not publish it**: the refusal is
- * enforced in code and described only in prose in `openapi.json`, so there is
- * nothing to read. Captured as B1579; it is the same one-source-per-fact
- * problem B1577 is about, one list further down.
+ * `/api/health` publishes `weather.reservedSources` (B1580), which is the same
+ * constant `lib/validate/entry.ts` refuses by, so this cannot fall behind the
+ * rule it is enforcing. It was hardcoded for exactly as long as the instance
+ * described the list in prose only.
  *
  * Why a client needs it at all: a day whose weather this server looked up
  * carries `weatherData` with `source: "open-meteo"` **written into the file**,
  * and sending that back is refused — so a publish run that simply forwarded
  * every `weatherData` it found would fail on every day the archive had ever
- * answered for. Found by driving, not by reading.
+ * answered for. Found by driving, not by reading (B1578).
+ *
+ * The fallback is not the old copy. An instance too old to publish the list,
+ * or one that cannot be reached, leaves `reservedSources` absent — and a
+ * client that then guessed would be back where it started. `open-meteo` is
+ * named here as the one value every instance that has ever had this rule
+ * refuses, and the run says when it is working from that rather than from the
+ * instance's own answer.
  */
-export const RESERVED_WEATHER_SOURCES = ["open-meteo"];
+export const FALLBACK_RESERVED_WEATHER_SOURCES = ["open-meteo"];
 
 /** Whether a reading in a file is the server's own, and so must not be sent
- * back as though somebody had measured it. */
-export function isServerWeather(weatherData) {
+ * back as though somebody had measured it. `reserved` is what the instance
+ * said; the fallback covers an instance that does not publish it yet. */
+export function isServerWeather(weatherData, reserved) {
+  const list = Array.isArray(reserved) && reserved.length
+    ? reserved
+    : FALLBACK_RESERVED_WEATHER_SOURCES;
   const source = typeof weatherData?.source === "string" ? weatherData.source.trim().toLowerCase() : "";
-  return RESERVED_WEATHER_SOURCES.includes(source);
+  return list.some((name) => String(name).toLowerCase() === source);
 }

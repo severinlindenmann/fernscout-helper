@@ -5,7 +5,7 @@
 import { strict as assert } from "node:assert";
 import { unaccountedKeys } from "./doors.mjs";
 import { JOURNAL_DEDICATED_DOORS, JOURNAL_NO_UPDATE_DOOR, JOURNAL_UPDATE_DOORS } from "./journalFields.mjs";
-import { DAY_DEDICATED_DOORS, DAY_UPDATE_DOORS } from "./dayFields.mjs";
+import { DAY_DEDICATED_DOORS, DAY_UPDATE_DOORS, FALLBACK_RESERVED_WEATHER_SOURCES, isServerWeather } from "./dayFields.mjs";
 
 let failures = 0;
 const test = (what, fn) => {
@@ -75,6 +75,41 @@ test("the three B1578 added are sent, not merely accounted for", () => {
   for (const key of ["timezone", "visibility", "weatherData"]) {
     assert.ok(DAY_UPDATE_DOORS.includes(key), `${key} must be sent, not explained away`);
   }
+});
+
+console.log("the server's own weather readings");
+
+const reading = (source) => ({ tempMax: 14, source, recordedAt: "2026-06-24T17:00:00Z" });
+
+test("a reserved source is recognised from what the instance published", () => {
+  // The list is read from /api/health now (B1580), not remembered here.
+  assert.equal(isServerWeather(reading("open-meteo"), ["open-meteo"]), true);
+  assert.equal(isServerWeather(reading("weatherstack"), ["open-meteo", "weatherstack"]), true);
+});
+
+test("a source the instance did not reserve is a person's own reading", () => {
+  assert.equal(isServerWeather(reading("the Kestrel on my handlebars"), ["open-meteo"]), false);
+  // The guard-that-fires-on-an-honest-run case: this is the sanctioned route
+  // for somebody's own instrument, and skipping one would silently drop it.
+  assert.equal(isServerWeather(reading("my balcony thermometer"), ["open-meteo"]), false);
+});
+
+test("case and surrounding space do not let a reserved name through", () => {
+  assert.equal(isServerWeather(reading("  Open-Meteo "), ["open-meteo"]), true);
+});
+
+test("an instance that publishes nothing falls back rather than waving it through", () => {
+  // An older instance, or one that could not be reached. Guessing "nothing is
+  // reserved" would send the server's own reading straight back at it and
+  // fail the run on every day the archive ever answered for.
+  assert.equal(isServerWeather(reading("open-meteo"), []), true);
+  assert.equal(isServerWeather(reading("open-meteo"), undefined), true);
+  assert.deepEqual(FALLBACK_RESERVED_WEATHER_SOURCES, ["open-meteo"]);
+});
+
+test("a day with no reading at all is not mistaken for one", () => {
+  assert.equal(isServerWeather(undefined, ["open-meteo"]), false);
+  assert.equal(isServerWeather({}, ["open-meteo"]), false);
 });
 
 console.log(failures ? `\n${failures} failed` : "\nall passed");

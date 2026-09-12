@@ -44,7 +44,7 @@ import { SITE, call, health, refusal, token } from "../shared/api.mjs";
 import { galleryFile, readJournal } from "../shared/journal.mjs";
 import { TRIP_UPDATE_DOORS } from "../shared/tripFields.mjs";
 import { JOURNAL_COMPARABLE_NO_DOOR, JOURNAL_NO_UPDATE_DOOR, JOURNAL_UPDATE_DOORS } from "../shared/journalFields.mjs";
-import { DAY_UPDATE_DOORS, isServerWeather } from "../shared/dayFields.mjs";
+import { DAY_UPDATE_DOORS, FALLBACK_RESERVED_WEATHER_SOURCES, isServerWeather } from "../shared/dayFields.mjs";
 
 // Keys with their own dedicated door above, or sent after the day loop below
 // (cover) — subtracted from TRIP_UPDATE_DOORS rather than listed a second
@@ -176,7 +176,20 @@ if (!creating) {
 
 /** What this server will take in an upload — its answer, not a guess here. */
 let LIMITS = {};
-try { LIMITS = (await health()).doc?.media ?? {}; } catch { LIMITS = {}; }
+/**
+ * The weather source names only the server may claim — B1580, read rather
+ * than remembered. An instance too old to publish them, or one that cannot be
+ * reached, leaves this empty and `isServerWeather` falls back to the one value
+ * every such instance has always refused; the line below says which happened,
+ * because "we checked" and "we assumed" are different claims.
+ */
+let reservedWeatherSources = [];
+let saidFallback = false;
+try {
+  const doc = (await health()).doc ?? {};
+  LIMITS = doc.media ?? {};
+  reservedWeatherSources = Array.isArray(doc.weather?.reservedSources) ? doc.weather.reservedSources : [];
+} catch { LIMITS = {}; }
 const journal = readJournal(user);
 console.log(
   `${SITE} · content/${user}` +
@@ -647,9 +660,18 @@ for (const trip of journal.trips) {
     // therefore fail on every day the archive has ever answered for. Said out
     // loud rather than dropped quietly: the value is not lost, it is simply
     // the instance's to re-derive. B1578.
-    if (isServerWeather(body.weatherData)) {
+    if (isServerWeather(body.weatherData, reservedWeatherSources)) {
       delete body.weatherData;
       note(`  ${step(`skip ${entry.file}'s weather — it is this server's own lookup, not a reading to re-send`)}`);
+      if (!reservedWeatherSources.length && !saidFallback) {
+        // Once per run, not once per day: it is a fact about the instance,
+        // and a fourteen-day trip would otherwise print it fourteen times.
+        saidFallback = true;
+        console.log(
+          `      note: this instance does not publish weather.reservedSources, so that was ` +
+          `judged against ${FALLBACK_RESERVED_WEATHER_SOURCES.join(", ")} rather than its own answer.`,
+        );
+      }
     }
     // `weather` never lives in the file — it is an instruction to the
     // server, not content, which is exactly what `never-in-file` means in
