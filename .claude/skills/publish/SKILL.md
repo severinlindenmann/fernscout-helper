@@ -16,6 +16,21 @@ the difference. A trip that is not there is created; a day that is not there
 is written; a day that is there is updated; photographs the day does not have
 yet are sent; then each day is published.
 
+**There is a road down now, and this is half of it.** `sync` (B491) compares a
+hash of every file against the instance's own manifest and can bring the site's
+newest version back to the folder — the thing `publish` alone never did. Its up
+leg is this script, run with `--changed <file>`: a JSON array of journal-relative
+paths, which narrows a run to the files that actually differ instead of
+re-`PATCH`ing fourteen days to correct one. Nothing about running `publish` by
+hand changed; without `--changed` it walks everything exactly as before.
+
+**Three `config.json` fields are never sent, and every run now says so** —
+`owner.email`, `baseCurrency` and `media`, each refused by the instance for its
+own reason (B1504). Two of them are read back from the site, so a run names them
+specifically when the local copy differs; `owner.email` is not read back at all —
+a token that can read a journal's config is not permission to collect its owner's
+address — so it is stated rather than compared.
+
 **Running it twice is safe and does not duplicate anything** — no second trip,
 no second day, no photograph uploaded twice. It is not silent, though: a second
 run still sends the day bodies again, because the folder is the source of

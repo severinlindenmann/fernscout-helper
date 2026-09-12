@@ -59,6 +59,7 @@ Every tool here does one of three things.
 | `trip-budget` | "what did the trip cost", "add the flights" | anywhere |
 | `validate-content` | "check my journal", "did I forget anything" | anywhere |
 | `publish` | "publish", "put it online" | a journal on an instance |
+| "sync my journal", "get the newest version down", "I edited a day on the site" | `sync` |
 
 **A skill is one folder.** `.claude/skills/<name>/` holds a `SKILL.md` you can
 read start to finish and the scripts it runs, so nothing is hidden and nothing

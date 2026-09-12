@@ -37,12 +37,13 @@
 // is worse than not starting — and the errors are cheap to read first.
 import { execFileSync } from "node:child_process";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { arg, has } from "../shared/lib.mjs";
 import { SITE, call, health, refusal, token } from "../shared/api.mjs";
 import { galleryFile, readJournal } from "../shared/journal.mjs";
 import { TRIP_UPDATE_DOORS } from "../shared/tripFields.mjs";
+import { JOURNAL_COMPARABLE_NO_DOOR, JOURNAL_NO_UPDATE_DOOR, JOURNAL_UPDATE_DOORS } from "../shared/journalFields.mjs";
 
 // Keys with their own dedicated door above, or sent after the day loop below
 // (cover) — subtracted from TRIP_UPDATE_DOORS rather than listed a second
@@ -67,6 +68,28 @@ const replaceMedia = has("replace-media");
 // gets nothing rather than a guess, because the server has nothing to look up
 // and asking anyway would claim a certainty nobody has.
 const weather = has("weather");
+/**
+ * Only re-send what actually differs — B491, and the reason `sync up` can
+ * claim "nothing else was re-sent" rather than hoping nobody checks.
+ *
+ * A JSON array of journal-relative paths (`trips/x/entries/2026-01-01-a.md`,
+ * `trips/x/media/a-day/01.jpg`), written by `sync.mjs` from its three-way
+ * compare against the instance's own manifest. Without it this script does
+ * what it always did: walk everything and let idempotence sort it out, which
+ * is correct and re-`PATCH`es every day of a fourteen-day trip to change one.
+ *
+ * It narrows and never widens. A trip with no changed path under it is
+ * skipped whole; a day whose own file and whose photographs are all unchanged
+ * is skipped. Everything a changed path *does* touch runs exactly as before,
+ * including the validate gate, which is not something a diff gets to skip.
+ */
+const changedFile = arg("changed");
+const changed = changedFile ? new Set(JSON.parse(readFileSync(changedFile, "utf8"))) : null;
+const changedUnder = (prefix) => {
+  if (!changed) return true;
+  for (const path of changed) if (path.startsWith(prefix)) return true;
+  return false;
+};
 
 if (!user) {
   console.error("Which journal? node publish.mjs --user <username>");
@@ -291,10 +314,66 @@ note(`journal ${user} exists — ${status.body?.trips?.length ?? "?"} trips alre
  * journal by accident.
  */
 if (journal.config) {
+  /**
+   * Three fields of config.json have no door, and saying nothing about them
+   * is a lie of omission — B1504.
+   *
+   * The instance refuses `owner`, `baseCurrency` and `media` on purpose, each
+   * for a reason written beside it there, and all three refusals are right.
+   * What was wrong is what happened next: this script correctly declined to
+   * send them, every call it made succeeded, and the run reported success
+   * while the line the person had just corrected never reached the site. "It
+   * was accepted" is not the same claim as "it is there".
+   *
+   * Two different jobs, because the three fields are not equally knowable:
+   *
+   *   - **The scope line, every run, unconditional.** It names all three and
+   *     says they are never sent. This is what covers `owner.email`, which
+   *     `GET .../config` deliberately does not read back — a token that can
+   *     read a journal's config is not permission to collect its owner's
+   *     address — so a local edit to it cannot be detected at all. A warning
+   *     fired on a guess would fire on every honest journal, which is its own
+   *     way of being useless. A statement is not an alarm.
+   *   - **A named warning, only on a difference**, for `baseCurrency` and
+   *     `media`, both of which the instance does read back (the second since
+   *     B1504). A guard that fires on an honest run is a bug, so these say
+   *     nothing at all unless a compared value actually differs.
+   */
+  const noDoor = Object.keys(JOURNAL_NO_UPDATE_DOOR).filter((key) => journal.config[key] !== undefined);
+  if (noDoor.length) {
+    console.log(
+      `  note: ${noDoor.join(", ")} ${noDoor.length === 1 ? "has" : "have"} no door and ` +
+      `${noDoor.length === 1 ? "was" : "were"} not sent — ` +
+      noDoor.map((key) => `${key}: ${JOURNAL_NO_UPDATE_DOOR[key]}`).join(" "),
+    );
+  }
+  const live = offline ? { ok: false } : await call("GET", `/api/v1/${user}/config`);
+  if (live.ok) {
+    for (const key of JOURNAL_COMPARABLE_NO_DOOR) {
+      const here = journal.config[key];
+      const there = live.body?.journal?.[key];
+      if (here === undefined || there === undefined) continue;
+      if (JSON.stringify(here) === JSON.stringify(there)) continue;
+      console.log(
+        `  warn: ${key} here is ${JSON.stringify(here)}, the site is running ` +
+        `${JSON.stringify(there)}. This run did not change it and no run can — ` +
+        `${JOURNAL_NO_UPDATE_DOOR[key]}`,
+      );
+    }
+  }
+
   const profile = {};
-  for (const key of ["title", "tagline", "visibility", "startLocation", "units",
-                     "locales", "defaultLocale", "displayCurrencies", "manualRates"]) {
+  // B1569 — this used to be nine keys written out by hand while the instance
+  // had eleven, so `ownerTel` and `travellers` were dropped in silence on
+  // every run. One list, shared with validate-content, the way
+  // `tripFields.mjs` already does it one level down.
+  for (const key of JOURNAL_UPDATE_DOORS) {
     if (journal.config[key] !== undefined) profile[key] = journal.config[key];
+  }
+  // `ownerTel` is the one writable field that is not a top-level key of
+  // config.json — it is `owner.tel`, flattened by the API (B614).
+  if (profile.ownerTel === undefined && journal.config.owner?.tel !== undefined) {
+    profile.ownerTel = journal.config.owner.tel;
   }
   if (Object.keys(profile).length) {
     note(`  ${step(`set the journal's own fields — ${Object.keys(profile).join(", ")}`)}`);
@@ -342,6 +421,11 @@ const existing = new Set((remote.body?.trips ?? []).map((t) => t.id));
 
 for (const trip of journal.trips) {
   if (only && trip.id !== only) continue;
+  // A trip nothing under it changed — but only once it exists on the site.
+  // A trip that is not there yet has to be created whatever the diff says,
+  // because "unchanged since the last sync" and "the site has it" are
+  // different questions and there has never been a last sync for this one.
+  if (changed && existing.has(trip.id) && !changedUnder(`trips/${trip.id}/`)) continue;
   const data = trip.trip?.data ?? {};
   console.log(`\n── ${trip.id}`);
 
@@ -523,6 +607,17 @@ for (const trip of journal.trips) {
   const slugByFile = new Map();
 
   for (const entry of trip.entries) {
+    // The day's own markdown, or any photograph it carries. A caption edited
+    // in the frontmatter is the first of those; a re-exported photograph
+    // under the same name is the second, and neither is visible from the
+    // other.
+    if (changed && !changed.has(`trips/${trip.id}/entries/${entry.file}`)) {
+      const photographs = (entry.data.gallery ?? [])
+        .map((item) => galleryFile(journal, trip, item.src))
+        .filter(Boolean)
+        .map((file) => relative(journal.dir, file).split(sep).join("/"));
+      if (!photographs.some((path) => changed.has(path))) continue;
+    }
     const date = entry.data.date ?? entry.fileDate;
     const body = { title: entry.data.title, date, content: entry.body };
     for (const key of ["time", "location", "country", "countryCode", "lat", "lng", "tags", "costs",
