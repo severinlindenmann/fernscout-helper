@@ -24,6 +24,9 @@ import { CONTENT, galleryFile, isJournalShaped, readJournal, suggestedContentDir
 import { deref, health, openapi, requestSchema } from "../shared/api.mjs";
 import { slugify as titleSlugify } from "../shared/slug.mjs";
 import { TRIP_NO_UPDATE_DOOR, TRIP_UPDATE_DOORS } from "../shared/tripFields.mjs";
+import { JOURNAL_DEDICATED_DOORS, JOURNAL_NO_UPDATE_DOOR, JOURNAL_UPDATE_DOORS } from "../shared/journalFields.mjs";
+import { DAY_DEDICATED_DOORS, DAY_UPDATE_DOORS } from "../shared/dayFields.mjs";
+import { unaccountedKeys } from "../shared/doors.mjs";
 
 /** Great-circle distance in km, for comparing two days' coordinates (B1522). */
 function haversineKm(lat1, lng1, lat2, lng2) {
@@ -365,6 +368,35 @@ function checkJournal(user, only) {
   else if (!journal.config) error(`content/${user}`, "has no config.json", "the journal's title, owner and languages live there");
   else {
     checkKeys(where, MODEL["config.json"].keys, journal.config, { scope: "journal" });
+
+    // B1569 — the same guard B1518 put on `trip.md`, one level up, and for
+    // the same reason: `publish.mjs` sent nine of `config.json`'s keys while
+    // the instance took eleven, so `ownerTel` and `travellers` went out in
+    // silence on every run.
+    for (const key of unaccountedKeys(MODEL["config.json"].keys, JOURNAL_UPDATE_DOORS,
+                                      { ...JOURNAL_NO_UPDATE_DOOR, ...JOURNAL_DEDICATED_DOORS })) {
+      warn(where,
+        `${key} has no update door in publish.mjs`,
+        "the instance knows this config.json key, but shared/journalFields.mjs lists it " +
+        "in neither JOURNAL_UPDATE_DOORS nor JOURNAL_NO_UPDATE_DOOR — editing it here " +
+        "will be accepted and never reach the site, the way ownerTel and travellers did. " +
+        "Add it to whichever it belongs in.");
+    }
+
+    // B1569 — and the same question for a day, which had no guard at all and
+    // is where almost every new field lands. Reported once for the journal
+    // rather than once per day: it is a fact about this repository's own list
+    // against the instance's, not about any particular entry.
+    const dayWhere = `content/${user}/trips/*/entries/*.md`;
+    for (const key of unaccountedKeys(MODEL["entries/YYYY-MM-DD-slug.md"].keys,
+                                      DAY_UPDATE_DOORS, DAY_DEDICATED_DOORS)) {
+      warn(dayWhere,
+        `${key} is never sent by publish.mjs`,
+        "the instance knows this day key, but shared/dayFields.mjs lists it in neither " +
+        "DAY_UPDATE_DOORS nor DAY_DEDICATED_DOORS — a day carrying it validates here and " +
+        "the value never reaches the site. Add it to whichever it belongs in.");
+    }
+
     const features = journal.config.features ?? {};
     checkFeatures(where, features);
     const off = Object.entries(features).filter(([, v]) => v && v.enabled === false).map(([k]) => k);
@@ -387,8 +419,8 @@ function checkJournal(user, only) {
     // what it can send once a trip exists; a key content-model.json knows
     // and that list does not (and that is not one of the three with no
     // update door on purpose) is exactly the next `teaser` waiting to happen.
-    for (const key of Object.keys(MODEL["trip.md"].keys)) {
-      if (TRIP_UPDATE_DOORS.includes(key) || TRIP_NO_UPDATE_DOOR.has(key)) continue;
+    for (const key of unaccountedKeys(MODEL["trip.md"].keys, TRIP_UPDATE_DOORS,
+                                      Object.fromEntries([...TRIP_NO_UPDATE_DOOR].map((k) => [k, "no update door, on purpose"])))) {
       warn(tripWhere,
         `${key} has no update door in publish.mjs`,
         "the instance knows this trip.md key, but publish.mjs's TRIP_UPDATE_DOORS " +

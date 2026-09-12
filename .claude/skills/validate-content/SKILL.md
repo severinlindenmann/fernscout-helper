@@ -87,6 +87,21 @@ the instance accepts that this repository does not offer is a tip; a key these
 tools write that the instance does not list is a warning, because it will be
 dropped on publish and nothing will say so.
 
+**And the same question for each file's own key list** (B1518, B1569): given
+every key `content-model.json` says a `config.json`, a `trip.md` or a day may
+carry, which of them can `publish` actually send? One that neither travels nor
+has a stated reason for never travelling is warned about by name — it is the
+next `teaser`, `cover`, `ownerTel` or `travellers`, each of which was accepted
+here and silently never sent for months. `shared/doors.mjs` asks it;
+`tripFields.mjs`, `journalFields.mjs` and `dayFields.mjs` are the three
+answers.
+
+These warnings are about **this repository**, not about the journal in front of
+you — a clean journal can raise them, and the fix is always a line in one of
+those three files. They are a fallback, and a weak one: they only notice after
+the instance has already grown the field. The gate belongs where the field is
+added, which is the fernscout repository's B1577.
+
 ## When the schema cannot be fetched
 
 It says so and checks the file format alone. That is a weaker check, and the

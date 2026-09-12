@@ -44,6 +44,7 @@ import { SITE, call, health, refusal, token } from "../shared/api.mjs";
 import { galleryFile, readJournal } from "../shared/journal.mjs";
 import { TRIP_UPDATE_DOORS } from "../shared/tripFields.mjs";
 import { JOURNAL_COMPARABLE_NO_DOOR, JOURNAL_NO_UPDATE_DOOR, JOURNAL_UPDATE_DOORS } from "../shared/journalFields.mjs";
+import { DAY_UPDATE_DOORS } from "../shared/dayFields.mjs";
 
 // Keys with their own dedicated door above, or sent after the day loop below
 // (cover) — subtracted from TRIP_UPDATE_DOORS rather than listed a second
@@ -633,8 +634,11 @@ for (const trip of journal.trips) {
     }
     const date = entry.data.date ?? entry.fileDate;
     const body = { title: entry.data.title, date, content: entry.body };
-    for (const key of ["time", "location", "country", "countryCode", "lat", "lng", "tags", "costs",
-                       "transportMode", "transportFrom", "transportTo", "travelScene", "test", "translations"]) {
+    // B1569 — one list, shared with validate-content, which warns when
+    // content-model.json knows a day key neither it nor DAY_DEDICATED_DOORS
+    // accounts for. This was the least protected of the helper's key lists
+    // and the one a new field is most likely to land in.
+    for (const key of DAY_UPDATE_DOORS) {
       if (entry.data[key] !== undefined && entry.data[key] !== null) body[key] = entry.data[key];
     }
     // `weather` never lives in the file — it is an instruction to the

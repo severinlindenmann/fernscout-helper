@@ -51,3 +51,16 @@ export const JOURNAL_NO_UPDATE_DOOR = {
  * would fire on every honest journal, which is its own kind of useless.
  */
 export const JOURNAL_COMPARABLE_NO_DOOR = ["baseCurrency", "media"];
+
+/**
+ * Keys that travel through a call of their own, so a key here is accounted
+ * for rather than missing.
+ *
+ * `features` is the whole of it: the instance refuses a body naming
+ * `features` alongside a profile field — deliberately, so "turn mail off"
+ * cannot also rename the journal by accident — so it is a second `PATCH` to
+ * the same URL rather than part of the first.
+ */
+export const JOURNAL_DEDICATED_DOORS = {
+  features: "PATCH /api/v1/{user}/config with {features}, as a call of its own",
+};
