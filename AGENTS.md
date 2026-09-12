@@ -116,8 +116,9 @@ there is any doubt about whether they meant the website or just the file.
                              to the committed content-model.snapshot.json only when the
                              instance cannot be reached) · snapshot.mjs (refreshes that
                              snapshot from a real instance; never hand-edit the JSON) ·
-                             journalFields.mjs (which config.json keys have a door, and
-                             which three never do) · syncManifest.mjs (the local walk, the
+                             journalFields.mjs · dayFields.mjs · tripFields.mjs (which keys
+                             of each file have a door, and which never do) · doors.mjs
+                             (what neither list accounts for — the next silent drop) · syncManifest.mjs (the local walk, the
                              hash the instance uses, and the three-way compare) ·
                              pattern.mjs (a `pattern` rule, matched without ever handing
                              an untrusted regex to RegExp) · journal.mjs (a folder,
