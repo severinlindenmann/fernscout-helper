@@ -334,7 +334,30 @@ export function interpretManifest(doc) {
       keys[key].noTip = true;
     }
 
-    MODEL[file] = { what: spec?.what, api: spec?.api, optional: spec?.optional, keys, shapes };
+    /**
+     * `doors[<file>]` — which call writes each key, published since B1577.
+     *
+     * Folded in here rather than read off the raw document by each caller, so
+     * "the instance did not publish this" is one absence in one place. `null`
+     * means an instance older than B1577; `shared/doors.mjs` is what decides
+     * what to do about that, and it does not guess.
+     */
+    const doors = doc.doors?.[file] ?? null;
+    const usableDoors =
+      doors && typeof doors.call === "string" && doors.update && typeof doors.update === "object"
+        ? { create: doors.create, call: doors.call, update: doors.update, noUpdate: doors.noUpdate ?? {} }
+        : null;
+    if (doors && !usableDoors) {
+      notices.push({
+        kind: "unusable-doors",
+        message: `${file}: a "doors" entry that is not the shape this client knows — ignored, and the fallback lists are in use`,
+      });
+    }
+
+    MODEL[file] = {
+      what: spec?.what, api: spec?.api, optional: spec?.optional, keys, shapes,
+      doors: usableDoors,
+    };
     totalKeys += Object.keys(keys).length;
   }
 
@@ -632,4 +655,70 @@ export function snapshotDrift(liveDoc, snapshot) {
   for (const n of liveNamed) if (!snapNamed.has(n)) problems.push(`named check only on the live instance: ${n}`);
   for (const n of snapNamed) if (!liveNamed.has(n)) problems.push(`named check only in the snapshot: ${n}`);
   return problems;
+}
+
+/**
+ * Do this repository's fallback key lists still agree with the instance's own
+ * `doors` — B1577.
+ *
+ * The three lists in `dayFields.mjs`, `journalFields.mjs` and
+ * `tripFields.mjs` are a committed fallback for an instance older than B1577,
+ * which publishes no doors. A committed copy is only acceptable while
+ * something compares it to the real thing, which is the whole argument
+ * `content-model.snapshot.json` rests on — so this is that comparison, and
+ * `selftest.mjs` fails on what it returns.
+ *
+ * An instance that publishes no doors returns nothing: there is nothing to
+ * disagree with, and reporting drift against an absence would fail every run
+ * against an older instance for no reason.
+ */
+export function doorsDrift(doc, lists) {
+  const out = [];
+  for (const [file, { sends, accounted }] of Object.entries(lists)) {
+    const doors = doc?.doors?.[file];
+    if (!doors || typeof doors.call !== "string" || !doors.update) continue;
+
+    /**
+     * Only keys that can actually appear in a file.
+     *
+     * The instance's doors also cover api-only keys — `username`,
+     * `ownerName`, `coordinates` — which never sit in a file, so a client
+     * reading a folder has nothing to account for and warning about them
+     * would fire on every honest run. Same exemption `unaccountedKeys` makes,
+     * for the same reason.
+     */
+    const inFile = new Set(
+      (doc.rules ?? [])
+        .filter((r) => r.where === file && r.assert === "known-key" && (r.path ?? "") === "")
+        .flatMap((r) => r.keys ?? []),
+    );
+    const known = { ...doors.update, ...(doors.noUpdate ?? {}) };
+
+    /**
+     * The question is not "do the two partition the same way" — they do not,
+     * and they are not meant to. The client splits a plain field from one it
+     * handles another way (a photograph is a file, publishing is its own
+     * call); the instance simply names the call for each. What matters is
+     * whether every key the instance knows is accounted for **somewhere** on
+     * this side, because a key in neither list is one that gets dropped in
+     * silence. That is the failure B1518 and B1569 both were.
+     */
+    for (const key of Object.keys(known)) {
+      if (!inFile.has(key)) continue;
+      if (sends.includes(key) || key in accounted) continue;
+      out.push(
+        `${file}: the instance knows a door for ${key} and the fallback lists account for it ` +
+        `nowhere — against an instance older than B1577 it would be dropped in silence`,
+      );
+    }
+
+    // And the other direction: a key this side still sends that the instance
+    // has no door for at all. A rename or a removal leaves exactly that.
+    for (const key of sends) {
+      if (!(key in known)) {
+        out.push(`${file}: the fallback sends ${key} and the instance knows no door for it at all`);
+      }
+    }
+  }
+  return out;
 }

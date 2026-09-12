@@ -27,3 +27,34 @@ export function unaccountedKeys(modelKeys, sends, accounted) {
     .filter(([key, spec]) => !spec?.apiOnly && !sends.includes(key) && !(key in accounted))
     .map(([key]) => key);
 }
+
+/**
+ * Which keys of a file travel as plain fields on its own general update call.
+ *
+ * **This is the read that ended the hand-kept lists** — B1577. The instance
+ * publishes `doors` in `content-model.json`: a `call` (the file's own general
+ * update call), an `update` map of key to the call that writes it, and a
+ * `noUpdate` map of key to why none does. The keys whose call *is* `call` are
+ * the ones a client puts in that call's body; the rest have doors of their own
+ * and are somebody else's business.
+ *
+ * `fallback` is used only when the instance publishes no doors at all, which
+ * means an instance older than B1577. It is a committed copy, the same bargain
+ * `content-model.snapshot.json` already makes — and `selftest.mjs` fails when
+ * a fallback disagrees with a live document, which is what makes a committed
+ * copy acceptable here when a hand-written list was not.
+ */
+export function sendableKeys(doors, fallback) {
+  if (!doors) return { keys: fallback, from: "fallback" };
+  const keys = Object.entries(doors.update)
+    .filter(([, call]) => call === doors.call)
+    .map(([key]) => key);
+  return { keys, from: "the instance" };
+}
+
+/** Keys with no door at all, and the reason for each — the instance's own
+ * sentences where it publishes them (B1504 prints one to a person). */
+export function noDoorKeys(doors, fallback) {
+  if (!doors) return { reasons: fallback, from: "fallback" };
+  return { reasons: doors.noUpdate ?? {}, from: "the instance" };
+}
