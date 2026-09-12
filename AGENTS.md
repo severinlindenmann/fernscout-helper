@@ -94,11 +94,26 @@ there is any doubt about whether they meant the website or just the file.
   where they can be seen and deleted. Do not work around this.
 - **A statement says what was paid, never what it was for.** Categories are
   proposed to the person and corrected by them, never decided quietly.
-- **Weather is an archive lookup, not a field to fill in.** A day with
-  coordinates can carry it — `validate-content` tips the offer, `publish
-  --weather` sends it for the whole trip in one run — but it is always the
-  server asking Open-Meteo for what a day actually was, at the person's word,
-  never this repository's own guess. A day with no coordinates gets nothing.
+- **Weather is looked up or handed over, never filled in.** Two routes, and
+  both are fine. The lookup: a day with coordinates can carry `weather: true`
+  — `validate-content` tips the offer, `publish --weather` sends it for the
+  whole trip in one run — and the server asks Open-Meteo what the day actually
+  was. A day with no coordinates gets nothing rather than a guess.
+
+  The second route is `weatherData`, and using it is supported rather than
+  tolerated: a reading from the person's own instrument, station, or weather
+  service goes across whole, with the `source` naming where it came from and a
+  `recordedAt` saying when. That is the point of the field — somebody's own
+  tools are allowed to produce their own data. `publish` sends it now (B1578).
+  It **skips a reading sourced `open-meteo`**, because that is the server's own
+  lookup written into the file and only a server may claim that name; the run
+  says so rather than dropping it quietly.
+
+  What is forbidden is unchanged and is the only thing that ever was: writing
+  a reading from this repository's own belief about what that day was probably
+  like. The instance can check that a source was *named*; it cannot check that
+  it was *real*, so inventing a plausible instrument to satisfy the check is
+  the same lie with an extra step.
 - **Extracting costs time, bandwidth and sometimes money.** Anything not already
   on the machine is downloaded. Always run the step that counts and estimates
   first, read it back, and get a yes.

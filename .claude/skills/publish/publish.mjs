@@ -44,7 +44,7 @@ import { SITE, call, health, refusal, token } from "../shared/api.mjs";
 import { galleryFile, readJournal } from "../shared/journal.mjs";
 import { TRIP_UPDATE_DOORS } from "../shared/tripFields.mjs";
 import { JOURNAL_COMPARABLE_NO_DOOR, JOURNAL_NO_UPDATE_DOOR, JOURNAL_UPDATE_DOORS } from "../shared/journalFields.mjs";
-import { DAY_UPDATE_DOORS } from "../shared/dayFields.mjs";
+import { DAY_UPDATE_DOORS, isServerWeather } from "../shared/dayFields.mjs";
 
 // Keys with their own dedicated door above, or sent after the day loop below
 // (cover) — subtracted from TRIP_UPDATE_DOORS rather than listed a second
@@ -640,6 +640,16 @@ for (const trip of journal.trips) {
     // and the one a new field is most likely to land in.
     for (const key of DAY_UPDATE_DOORS) {
       if (entry.data[key] !== undefined && entry.data[key] !== null) body[key] = entry.data[key];
+    }
+    // A reading this server looked up itself is written into the file with
+    // `source: "open-meteo"`, and sending it back is refused — only the
+    // server may claim that name. Forwarding every weatherData found would
+    // therefore fail on every day the archive has ever answered for. Said out
+    // loud rather than dropped quietly: the value is not lost, it is simply
+    // the instance's to re-derive. B1578.
+    if (isServerWeather(body.weatherData)) {
+      delete body.weatherData;
+      note(`  ${step(`skip ${entry.file}'s weather — it is this server's own lookup, not a reading to re-send`)}`);
     }
     // `weather` never lives in the file — it is an instruction to the
     // server, not content, which is exactly what `never-in-file` means in
