@@ -39,7 +39,10 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { ROOT } from "./lib.mjs";
 import { openapi, contentModel } from "./api.mjs";
-import { apiOnlyDrift, readSnapshot, snapshotDrift } from "./contentModel.mjs";
+import { apiOnlyDrift, doorsDrift, readSnapshot, snapshotDrift } from "./contentModel.mjs";
+import { DAY_DEDICATED_DOORS, DAY_UPDATE_DOORS } from "./dayFields.mjs";
+import { JOURNAL_DEDICATED_DOORS, JOURNAL_NO_UPDATE_DOOR, JOURNAL_UPDATE_DOORS } from "./journalFields.mjs";
+import { TRIP_NO_UPDATE_DOOR, TRIP_UPDATE_DOORS } from "./tripFields.mjs";
 
 const FIXTURES = join(ROOT, ".claude/skills/shared/fixtures");
 
@@ -158,6 +161,40 @@ try {
   console.log(`✗ snapshot check could not run: ${failure.message}`);
 }
 
+/**
+ * B1577 — the fallback key lists against the instance's own doors.
+ *
+ * This is what makes a committed fallback honest rather than a seventh
+ * hand-kept list. It runs only against an instance that publishes `doors`; an
+ * older one has nothing to compare with, and failing every run against it
+ * would be a guard firing on an honest one.
+ */
+let doorsFailed = 0;
+try {
+  const { doc, from, site } = await contentModel({});
+  if (!doc) {
+    console.log(`· doors check skipped — ${site ?? "the instance"} publishes no content-model.json`);
+  } else if (!doc.doors) {
+    console.log(`· doors check skipped — ${site ?? "the instance"} publishes no doors section (older than B1577)`);
+  } else {
+    const drift = doorsDrift(doc, {
+      "config.json": { sends: JOURNAL_UPDATE_DOORS, accounted: { ...JOURNAL_NO_UPDATE_DOOR, ...JOURNAL_DEDICATED_DOORS } },
+      "trip.md": { sends: TRIP_UPDATE_DOORS, accounted: Object.fromEntries([...TRIP_NO_UPDATE_DOOR].map((k) => [k, true])) },
+      "entries/YYYY-MM-DD-slug.md": { sends: DAY_UPDATE_DOORS, accounted: DAY_DEDICATED_DOORS },
+    });
+    if (drift.length) {
+      doorsFailed = drift.length;
+      console.log(`\n✗ doors drift — the fallback key lists disagree with ${from}:`);
+      for (const d of drift) console.log(`    ${d}`);
+    } else {
+      console.log(`✓ fallback key lists agree with the instance's own doors (from ${from})`);
+    }
+  }
+} catch (failure) {
+  doorsFailed = 1;
+  console.log(`✗ doors check could not run: ${failure.message}`);
+}
+
 if (missing > 0) {
   console.log(
     `\n${missing} fixture${missing === 1 ? "" : "s"} missing — this self-test proved nothing for ${missing === 1 ? "it" : "them"}.\n` +
@@ -246,5 +283,6 @@ try {
 process.exit(
   failed > 0 || missing > 0 || apiOnlyFailed > 0 || snapshotFailed > 0 ||
   publishFailed > 0 || frontmatterFailed > 0 || journalFailed > 0 ||
-  buildFailed > 0 || reviewFailed > 0 || metadataFailed > 0 ? 1 : 0,
+  buildFailed > 0 || reviewFailed > 0 || metadataFailed > 0 ||
+  doorsFailed > 0 ? 1 : 0,
 );

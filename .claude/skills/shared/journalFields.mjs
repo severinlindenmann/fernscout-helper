@@ -1,3 +1,18 @@
+// ── A FALLBACK, NOT THE SOURCE — B1577 ────────────────────────────────────
+//
+// The instance publishes which call writes each key, in `content-model.json`'s
+// `doors` section. `shared/doors.mjs` reads it and that answer wins. What is
+// below is used only against an instance older than B1577, which publishes no
+// doors at all — the same bargain `content-model.snapshot.json` already makes
+// for the file shape.
+//
+// It is not left on trust: `selftest.mjs` compares every list here against a
+// live document's doors and fails on a disagreement. That check is why a
+// committed copy is acceptable where a hand-written list was not, and it is
+// the difference between this file and the six lists B1577 was raised about.
+//
+// Once every instance these tools follow publishes doors, this file goes.
+
 // Which keys of `content/<user>/config.json` have a door, and which never do.
 //
 // The same answer `tripFields.mjs` gives one level down, and here for the same
