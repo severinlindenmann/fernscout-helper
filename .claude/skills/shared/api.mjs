@@ -9,6 +9,25 @@ import { ROOT } from "./lib.mjs";
 
 export const SITE = process.env.FERNSCOUT_URL?.replace(/\/$/, "") || "https://fernscout.ch";
 const CACHE = join(ROOT, "export", ".schema");
+
+/**
+ * Where one cached contract lives, with the directory made ready for it.
+ *
+ * **The `mkdirSync` is the point** — B1582. It used to sit in `openapi()`
+ * alone, while `health()` and `contentModel()` wrote into the same directory
+ * and assumed somebody else had made it. That held right up until the
+ * directory was not there: `writeFileSync` throws `ENOENT`, the `catch` around
+ * the fetch swallows it, and `health()` reports *"Could not reach <site>"*
+ * about a server that had just answered. Deleting the cache to force a fresh
+ * fetch is the obvious thing to do and was the thing that broke it.
+ *
+ * The three call sites also each built this filename themselves, which is one
+ * expression in three places — so the fix and the tidy are the same edit.
+ */
+function cacheFile(suffix = "") {
+  mkdirSync(CACHE, { recursive: true });
+  return join(CACHE, `${SITE.replace(/[^a-z0-9]+/gi, "-")}${suffix}.json`);
+}
 /** A day. The contract changes when the instance is deployed, not hourly. */
 const FRESH_MS = 24 * 60 * 60 * 1000;
 
@@ -33,8 +52,7 @@ function readCache(path) {
  * refuses to run.
  */
 export async function openapi({ offline = false, refresh = false } = {}) {
-  mkdirSync(CACHE, { recursive: true });
-  const path = join(CACHE, `${SITE.replace(/[^a-z0-9]+/gi, "-")}.json`);
+  const path = cacheFile();
   const cached = existsSync(path);
   const cachedDoc = cached ? readCache(path) : null;
   const usable = cachedDoc !== null;
@@ -73,7 +91,7 @@ export async function openapi({ offline = false, refresh = false } = {}) {
  * refused half-way through the upload.
  */
 export async function health({ offline = false, refresh = false } = {}) {
-  const path = join(CACHE, `${SITE.replace(/[^a-z0-9]+/gi, "-")}-health.json`);
+  const path = cacheFile("-health");
   const cached = existsSync(path);
   // `readCache` already folds "not valid JSON" into the same `null` as "not
   // there" — a corrupt file (half-written, hand-edited into garbage) is the
@@ -138,7 +156,7 @@ export async function health({ offline = false, refresh = false } = {}) {
  * than trusted.
  */
 export async function contentModel({ offline = false, refresh = false } = {}) {
-  const path = join(CACHE, `${SITE.replace(/[^a-z0-9]+/gi, "-")}-content-model.json`);
+  const path = cacheFile("-content-model");
   const cached = existsSync(path);
   const cachedDoc = cached ? readCache(path) : null;
   const recognised = cachedDoc !== null && Number.isInteger(cachedDoc.contentModel);

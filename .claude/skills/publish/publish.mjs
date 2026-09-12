@@ -189,7 +189,22 @@ try {
   const doc = (await health()).doc ?? {};
   LIMITS = doc.media ?? {};
   reservedWeatherSources = Array.isArray(doc.weather?.reservedSources) ? doc.weather.reservedSources : [];
-} catch { LIMITS = {}; }
+} catch (unreachable) {
+  // B1582 — this used to be `catch { LIMITS = {} }`, which lost the
+  // instance's upload limits **without a word** and left the batching below
+  // sizing itself against a hardcoded 64 MB guess. Those limits are in
+  // /api/health precisely so a caller does not have to guess (B540), and a
+  // run that silently reverted to guessing was the failure that put them
+  // there. Not fatal — the rest of a publish works fine, and a person who
+  // cannot reach /api/health can still write their days — so it says what it
+  // could not read and carries on.
+  LIMITS = {};
+  console.log(
+    `  note: could not read ${SITE}/api/health — ${unreachable.message}\n` +
+    `        Upload sizes will be batched against a default rather than this server's own\n` +
+    `        limits, and a batch too large for it will be refused rather than split.`,
+  );
+}
 const journal = readJournal(user);
 console.log(
   `${SITE} · content/${user}` +
