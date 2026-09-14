@@ -37,14 +37,26 @@ async function fileFrom(path) {
   return new File([Buffer.concat(chunks)], basename(path), { type: "text/csv" });
 }
 
-/** Stage it in the inbox, where it belongs to no day, then read it from there. */
+/**
+ * Stage it where it belongs to no day, then read it from there.
+ *
+ * One upload door in v2 — `POST .../media`, with an `intent` saying what the
+ * bytes are. A `bank_export` belongs to no day by its nature, and saying so is
+ * a decline like any other rather than an omission.
+ */
 async function stage(path) {
   const form = new FormData();
-  form.append("files", await fileFrom(path));
-  form.append("meta", JSON.stringify({ description: "" }));
-  const result = await call("POST", `/api/v1/${user}/inbox`, { body: form });
-  if (!result.ok) die(`  the inbox refused it:\n${refusal(result)}`);
-  return result.body.items[0];
+  form.set("file", await fileFrom(path));
+  form.set("intent", JSON.stringify({
+    kind: "bank_export",
+    declined: {
+      trip: "a statement is read first and only then belongs to a trip",
+      day: "a statement covers weeks, not one day",
+    },
+  }));
+  const result = await call("POST", `/api/v2/${user}/media`, { body: form });
+  if (!result.ok) die(`  the upload was refused:\n${refusal(result)}`);
+  return result.body.items?.[0] ?? result.body;
 }
 
 async function read(path) {
@@ -52,11 +64,16 @@ async function read(path) {
   const staged = await stage(path);
   console.log(`  staged as ${staged.id}${staged.duplicate ? " (already there)" : ""}`);
 
-  const body = { kind: "costs", inbox: staged.id };
-  if (format) body.format = format;
-  if (from) body.from = from;
-  if (to) body.to = to;
-  const result = await call("POST", `/api/v1/${user}/import`, { body });
+  // v2 reads a staged statement through a door of its own —
+  // `GET .../statements/{src}` — rather than through the import route, and it
+  // writes nothing: a report to have the conversation over, which is the whole
+  // shape of this skill. The window and the format are query parameters.
+  const query = new URLSearchParams();
+  if (format) query.set("format", format);
+  if (from) query.set("from", from);
+  if (to) query.set("to", to);
+  const src = encodeURIComponent(staged.src ?? staged.id);
+  const result = await call("GET", `/api/v2/${user}/statements/${src}${query.size ? `?${query}` : ""}`);
   if (!result.ok) {
     console.error(`  refused:\n${refusal(result)}`);
     for (const problem of result.body?.problems ?? []) console.error(`      ${problem}`);
@@ -83,7 +100,11 @@ async function read(path) {
     console.log("\nWhat the money actually cost:");
     for (const [currency, rate] of Object.entries(d.rates))
       console.log(`  ${currency}: ${rate}   # 1 ${currency} = ${rate} in the account's currency`);
-    console.log(`  Send these to PUT /api/v1/${user}/trips/<trip>/rates if the trip has none.`);
+    console.log(
+      `  These are v1's convention — units per 1 unit of the account's currency. A trip's\n` +
+      `  rates are units per 1 EUR in v2, so do not copy a number across: send\n` +
+      `  {"rates": {"currencies": [...]}} on the trip and let the server rate them.`,
+    );
   }
 
   const { transfers, incoming } = d.skipped;
@@ -143,7 +164,7 @@ async function write(path) {
         "Delete the rows that were not the trip rather than giving them one.",
     );
 
-  const result = await call("POST", `/api/v1/${user}/trips/${trip}/costs/import`, { body: { rows } });
+  const result = await call("POST", `/api/v2/${user}/trips/${trip}/costs/apply`, { body: { rows } });
   if (!result.ok) {
     console.error(`refused:\n${refusal(result)}`);
     for (const p of result.body?.problems ?? [])

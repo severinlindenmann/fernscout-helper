@@ -5,913 +5,260 @@
 //   node validate.mjs --user severin        one of them
 //   node validate.mjs --trip algarve-2026   one trip
 //   node validate.mjs --json                for another program to read
-//   node validate.mjs --offline             use the cached schema, no network
+//   node validate.mjs --offline             the disk checks only, no network
 //
-// Three severities, and the difference matters:
+// Two severities, and the difference matters:
 //
 //   error  the instance will refuse this, or the site cannot read it.
 //   warn   it will be accepted and is probably not what anybody meant.
-//   tip    an option that exists and is not set. Never a defect.
 //
 // It reports. It changes nothing — not the files, not the instance. Half of
-// what it finds is a question for a person ("no costs on seven days"), and an
-// agent that quietly fixed those would be inventing what happened.
+// what it finds is a question for a person ("nine days have no costs"), and a
+// tool that quietly answered those would be inventing what happened.
+//
+// ## Two halves, and only one of them lives here
+//
+// **What the instance will accept** is the instance's own question, and since
+// v2 there is a door that answers it exactly: every write route takes
+// `?dryRun=true` and replies with what it *would* have accepted — or refuses,
+// with the field, the reason, and for an open section the sentence that would
+// decline it. So this sends each document through that door and prints what
+// comes back. It is not a second implementation of the rules and it cannot
+// drift from them, which is the failure this whole repository keeps having:
+// `model.mjs` was a hand-kept copy of the file shape and fell behind, it was
+// replaced by reading `/content-model.json`, and that document then described
+// v1 for a year while the instance refused what it advertised (B1700 retired
+// it). A validator that re-derives the rules is a validator that will
+// eventually pass a journal the server rejects, and reject fields the server
+// requires.
+//
+// **What a server cannot know** is what stays here, permanently, because it
+// is about a folder the instance has never seen: a `media` src with no file
+// behind it, a media folder belonging to no day, a filename's date against the
+// document's own, two files claiming one slug, a day outside its trip's dates.
+// That half is real work and no door will ever do it.
 import { existsSync, statSync } from "node:fs";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { arg, has } from "../shared/lib.mjs";
-import { crosscheck, resolveModel } from "../shared/contentModel.mjs";
-import { CONTENT, galleryFile, isJournalShaped, readJournal, suggestedContentDir, usernames } from "../shared/journal.mjs";
-import { deref, health, openapi, requestSchema } from "../shared/api.mjs";
-import { slugify as titleSlugify } from "../shared/slug.mjs";
-import { TRIP_NO_UPDATE_DOOR, TRIP_UPDATE_DOORS } from "../shared/tripFields.mjs";
-import { JOURNAL_DEDICATED_DOORS, JOURNAL_NO_UPDATE_DOOR, JOURNAL_UPDATE_DOORS } from "../shared/journalFields.mjs";
-import { DAY_DEDICATED_DOORS, DAY_UPDATE_DOORS } from "../shared/dayFields.mjs";
-import { unaccountedKeys } from "../shared/doors.mjs";
-
-/** Great-circle distance in km, for comparing two days' coordinates (B1522). */
-function haversineKm(lat1, lng1, lat2, lng2) {
-  const R = 6371;
-  const toRad = (d) => (d * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLng = toRad(lng2 - lng1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(a));
-}
+import { CONTENT, isJournalShaped, mediaFile, readJournal, suggestedContentDir, usernames } from "../shared/journal.mjs";
+import { call, refusal, SITE } from "../shared/api.mjs";
 
 const found = [];
-const say = (severity, where, message, fix, key) => found.push({ severity, where, message, fix, key });
-
-/**
- * Fields already reported as an error in a given file, so the tip for the same
- * field is not printed beside it. "costs is not set" under "the trip tracks
- * costs and this day says nothing about it" is the same sentence twice, and
- * the second one makes the first look like advice rather than a refusal.
- */
-const errored = new Set();
+const say = (severity, where, message, fix) => found.push({ severity, where, message, fix });
 const error = (w, m, f) => say("error", w, m, f);
 const warn = (w, m, f) => say("warn", w, m, f);
-const tip = (w, m, f, key) => say("tip", w, m, f, key);
 
-/** The key somebody probably meant. Case and separators first, then one or
- * two edits — enough for `visibilty` and `transport_mode`, not enough to pair
- * `lat` with `lng`. */
-function suggest(key, known) {
-  const fold = (k) => k.toLowerCase().replace(/[_-]/g, "");
-  const others = known.filter((k) => k !== key);
-  const same = others.find((k) => fold(k) === fold(key));
-  if (same) return same;
-  const limit = key.length >= 6 ? 2 : 1;
-  let best = null, bestDistance = limit + 1;
-  for (const candidate of others) {
-    const a = fold(key), b = fold(candidate);
-    if (Math.abs(a.length - b.length) > limit) continue;
-    let previous = Array.from({ length: b.length + 1 }, (_, i) => i);
-    for (let i = 1; i <= a.length; i += 1) {
-      const row = [i];
-      for (let j = 1; j <= b.length; j += 1) {
-        row[j] = Math.min(previous[j] + 1, row[j - 1] + 1, previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
-      }
-      previous = row;
-    }
-    if (previous[b.length] < bestDistance) { best = candidate; bestDistance = previous[b.length]; }
+const onlyUser = arg("user");
+const onlyTrip = arg("trip");
+const asJson = has("json");
+const offline = has("offline");
+
+/** Does the folder's own date agree with the name it is filed under? The
+ * filename is the day's identity on the wire — `2026-08-26-hoi-an` IS the
+ * address — so a `date` inside that says otherwise is a day that will sort
+ * and render somewhere its file name does not suggest. */
+function checkDayIdentity(where, entry) {
+  if (!entry.document) return;
+  const inside = entry.document.date;
+  if (entry.fileDate && inside && entry.fileDate !== inside) {
+    error(where, `the filename says ${entry.fileDate} and the document says ${inside}`,
+      "rename the file, or correct the date — they are the same fact in two places");
   }
-  return bestDistance <= limit ? best : null;
-}
-
-const typeOf = (value) => (Array.isArray(value) ? "array" : value === null ? "null" : typeof value);
-
-/**
- * What the instance says a field may be, merged over what this repository
- * knows about the file.
- *
- * The instance wins on type, enum and required, always — it is the thing that
- * will refuse the write, and a second opinion here is only ever a second
- * opinion that can be wrong. What this repository adds is the half a request
- * schema has no way to carry: what the field is FOR (the tip), and the rules
- * for the keys that never cross the API at all.
- */
-let API = { trip: {}, day: {}, journal: {}, cost: {}, gallery: {} };
-/** The whole published document, kept so a `$ref` inside a schema resolves. */
-let DOC = null;
-
-/**
- * The file shape — which keys a file on disk may carry at all. Resolved once,
- * below, from `<site>/content-model.json` when there is one to read and an
- * instance recent enough to have published it; the committed snapshot
- * otherwise. Everything past this point reads these three exactly as it
- * always has — `checkKeys()` and `checkValue()` do not know or care which
- * source filled them in, which is what makes "identical findings either way"
- * a fact about the data rather than a promise about the code.
- */
-let MODEL, COST_KEYS, GALLERY_KEYS;
-
-function ruleFor(scope, key, local = {}) {
-  const published = API[scope]?.properties?.[key];
-  if (!published) return local;
-  return {
-    ...local,
-    type: published.type ?? local.type,
-    enum: published.enum ?? local.enum,
-    required: (API[scope]?.required ?? []).includes(key) || local.required,
-    // The document's own wording is better than anything written here: it is
-    // what the person who wrote the refusal chose to say.
-    tip: local.tip ?? published.description,
-    expected: local.expected,
-  };
-}
-
-/** One value against one key's rule. */
-function checkValue(where, key, rule, value) {
-  // `type` may be a list — the document writes `["array", "boolean"]` for a
-  // field a day may either answer or decline.
-  const types = rule.type === undefined ? null : [rule.type].flat();
-  // JSON has one number type and JSON Schema has two. A width of 1600 read out
-  // of a file is a `number`, and the document calls it an `integer`; treating
-  // that as a mismatch made every photograph in a real journal an error.
-  const actual = typeOf(value);
-  const matches = types?.some(
-    (type) => type === actual || (type === "integer" && Number.isInteger(value)),
-  );
-  if (types && !matches) {
-    error(where, `${key} is ${typeOf(value)}, expected ${types.join(" or ")}`, rule.expected);
-    return;
-  }
-  if (rule.enum && !rule.enum.includes(value)) {
-    error(where, `${key} is ${JSON.stringify(value)}`, `one of ${rule.enum.join(", ")}`);
-    return;
-  }
-  if (rule.pattern && typeof value === "string" && !rule.pattern.test(value)) {
-    error(where, `${key} is ${JSON.stringify(value)}`, rule.expected);
+  if (!entry.fileDate) {
+    error(where, "the filename does not begin with a date",
+      "a day is filed as YYYY-MM-DD-slug.json, and that name is its address on the instance");
   }
 }
 
-// B1401 — a key the parser never reached is not the same finding as a key
-// the file genuinely lacks, and this is the one place both meet: every
-// caller below that would otherwise say "X is missing" about a file has to
-// check this first. `frontmatter.mjs` marks exactly this with `truncated`
-// on the one problem it emits when it stops early, naming (best-effort)
-// which top-level keys came after the point it gave up on.
-const NO_UNREADABLE_KEYS = new Set();
-function unreadableKeys(problems) {
-  const keys = (problems ?? []).flatMap((p) => (p.truncated ? p.unreadKeys ?? [] : []));
-  return keys.length ? new Set(keys) : NO_UNREADABLE_KEYS;
-}
-
-/** A whole frontmatter block against a MODEL file. */
-function checkKeys(where, keys, data, { tips = true, scope = null, unreadable = NO_UNREADABLE_KEYS } = {}) {
-  const known = Object.keys(keys);
-  for (const [key, local] of Object.entries(keys)) {
-    if (local.apiOnly) continue;
-    const rule = scope ? ruleFor(scope, key, local) : local;
-    const value = data[key];
-    if (value === undefined || value === null) {
-      // `body: true` is the prose under the frontmatter, checked separately —
-      // it is not a key anybody forgot to write. `noTip` is for the fields it
-      // would be wrong to suggest: nobody should be nudged towards `test`.
-      if (local.body || local.noTip) continue;
-      // The parser stopped before it ever reached this key — it is not
-      // confirmed absent, and the truncation itself is already reported
-      // (as its own problem, with the line it happened on) wherever this
-      // file's `problems` are walked. Saying "missing" here too would be
-      // the same wrong claim in a second sentence.
-      if (unreadable.has(key)) continue;
-      if (rule.required) error(where, `${key} is missing`, rule.note ?? `required — ${rule.type}`);
-      else if (rule.tip && tips) tip(where, `${key} is not set`, rule.tip, key);
-      continue;
-    }
-    checkValue(where, key, rule, value);
-    const published = scope ? API[scope]?.properties?.[key] : null;
-    if (published?.items) checkList(`${where} ${key}`, published, value);
-  }
-  for (const key of Object.keys(data)) {
-    if (known.includes(key)) continue;
-    const near = suggest(key, known.filter((k) => !keys[k].apiOnly));
-    error(where, `${key} is not a field`, near ? `did you mean ${near}?` : "nothing reads it — it will be dropped");
-  }
-}
-
-/**
- * An object against a schema the instance published — used for the shapes that
- * live *inside* a field: a `people:` entry, a figure in `travellers:`, a cost
- * line, a gallery item, the `budget` block.
- *
- * These used to be unchecked or checked against a copy kept here, and the copy
- * was the thinner of the two: a `people:` entry with a name and no email
- * passed every check in this file and was refused by the instance, which is
- * the failure this whole pair exists to move earlier.
- */
-function checkObject(where, schema, value) {
-  const resolved = schema?.$ref ? deref(schema, DOC) : schema;
-  if (!resolved?.properties) return;
-  if (typeOf(value) !== "object") {
-    error(where, `is ${typeOf(value)}`, "an object");
-    return;
-  }
-  for (const key of resolved.required ?? []) {
-    if (value[key] === undefined) error(`${where}.${key}`, "is missing", "required");
-  }
-  for (const [key, rule] of Object.entries(resolved.properties)) {
-    if (value[key] === undefined) continue;
-    checkValue(where, key, rule, value[key]);
-  }
-  if (resolved.additionalProperties === false) {
-    for (const key of Object.keys(value)) {
-      if (key in resolved.properties) continue;
-      const near = suggest(key, Object.keys(resolved.properties));
-      error(`${where}.${key}`, "is not a field here", near ? `did you mean ${near}?` : "it will be refused");
+/** Every photograph a day names, against the disk. This is the check no
+ * server can make, and the one that catches a journal published with holes in
+ * it: the day says there is a picture, and there is no file. */
+function checkMedia(journal, trip, entry, where) {
+  for (const item of entry.document?.media ?? []) {
+    const file = mediaFile(journal, item.src);
+    if (!file || !existsSync(file)) {
+      error(where, `media ${item.src} is named by the day and is not on disk`,
+        "put the file there, or take the entry off the day — publishing it now writes a gap");
     }
   }
 }
 
-/** Every item of a list the document describes, against the item's schema. */
-function checkList(where, schema, value) {
-  if (!Array.isArray(value)) return;
-  const items = schema?.items;
-  if (!items) return;
-  value.forEach((item, index) => checkObject(`${where}[${index}]`, items, item));
-}
-
 /**
- * The two capabilities `app/api/v1/{user}/config`'s `view()` (in the
- * fernscout repo) never reads from a journal's own `features` at all:
+ * A media or originals folder no day points at — either a day nobody wrote,
+ * or photographs nobody will ever see.
  *
- *   features[name] = name === "logging" || name === "credits"
- *     ? serverOnly[name].enabled     // resolveCapabilities() — the operator's
- *     : user.features[name].enabled; // the journal's own opt-in
- *
- * with the comment there reading "`logging` and `credits` are never a
- * journal's own opt-in". `lib/config.ts`'s `DEFAULT_FEATURES` says the same
- * at length for both: `logging` is server-only by design (B257), and
- * `credits` decides whether a send is charged to the *operator's* card and is
- * "never asked with a username". Nothing published lists this — `/api/health`
- * answers the same shape for these two as for any other capability, so there
- * is no live signal to check against the way `CAPABILITY_NAMES` is for
- * unknown names. This is a named constant pointing at that one function,
- * accepted as the honest alternative to inventing a published source that
- * does not exist.
+ * **Matched against what the days actually reference, not against the day
+ * slugs.** A folder is called whatever the `src` says it is called: the
+ * migrated journals file photographs under the whole day slug, and the demo
+ * journal files them under a shorter name of its own. Comparing folder names
+ * to day slugs reported all three of the demo journal's folders as orphans on
+ * the first run of this check — a validator confidently wrong about perfectly
+ * good content, which is the exact failure this repository keeps having.
  */
-const SERVER_ONLY_FEATURES = ["logging", "credits"];
-
-/**
- * `config.json`'s `features` block, checked against the shape the server's
- * own `parseFeatures` (lib/config.ts) accepts — not just the keys, but what
- * sits under each one.
- *
- * `{ "postcards": true }` reads as an obvious shorthand for "on", and is
- * exactly what the instance refuses: it wants `{ "enabled": true }`, pushes a
- * `problems` entry, and falls back to the capability's default — off, for
- * everything optional. Nothing on disk says so unless this does; `checkKeys`
- * only ever looked at the top-level keys of `config.json`; it never opened
- * the object living under `features` to see what was inside.
- *
- * Names are checked against `CAPABILITY_NAMES`, the live list from
- * `/api/health`'s `capabilities` — the same list `parseFeatures`'s trailing
- * loop rejects an unknown key against. When that list could not be had
- * (offline, or the network failed and there is no cache) it is empty, and the
- * name check is skipped entirely: a validator with no list to check against
- * must not invent one, or every capability in a perfectly good journal would
- * come back "unknown".
- *
- * `logging` and `credits` are a warning, not an error, and deliberately not
- * the same mark as the bare boolean: the instance does not refuse either one
- * — `parseFeatures` accepts the shape fine — and nothing downstream breaks.
- * What is wrong is quieter: the value is parsed, stored, and never once
- * *read* back for either name, so an owner who sets `"credits": { "enabled":
- * true }` believing it does something has been misled, not refused. That is
- * "accepted and probably not what anybody meant" — this file's own
- * definition of `warn` — rather than "the instance will refuse this".
- *
- * The shape check itself — `{ "postcards": true }` is refused, only `{
- * "enabled": true }` is taken — is B644's `assert: "shape"`/`members` rule
- * (`config.json`'s `features.*`, `MODEL["config.json"].shapes.features`) when
- * the file shape came from the live document or the snapshot, so a
- * config.json is caught by the document's own rule rather than by an opinion
- * kept only here. `{ enabled: "boolean" }` below is only what runs if BOTH
- * were somehow unusable and `resolveModel()` fell back to its last-resort
- * empty MODEL — a case that should not happen, since a snapshot is always
- * committed, but one this file must not crash on if it ever does.
- */
-function checkFeatures(where, features) {
-  if (typeOf(features) !== "object") return;
-  const shape = MODEL["config.json"]?.shapes?.features;
-  const members = shape?.members ?? { enabled: "boolean" };
-  for (const [name, value] of Object.entries(features)) {
-    if (CAPABILITY_NAMES.length && !CAPABILITY_NAMES.includes(name)) {
-      const near = suggest(name, CAPABILITY_NAMES);
-      error(where, `features.${name} is not a known capability`,
-        near ? `did you mean ${near}?` : `the instance offers: ${CAPABILITY_NAMES.join(", ")}`);
-      continue;
+function checkOrphanFolders(journal, trip, where) {
+  const referenced = new Set();
+  for (const entry of trip.entries) {
+    for (const item of entry.document?.media ?? []) {
+      const match = String(item.src ?? "").match(/^\/media\/[^/]+\/([^/]+)\//);
+      if (match) referenced.add(match[1]);
     }
-    if (typeOf(value) !== "object") {
-      error(where, `features.${name} is ${typeOf(value)}`, `must be an object like { "enabled": ${JSON.stringify(value)} }`);
-      continue;
-    }
-    // Each declared member is a NESTED field of this feature's own value
-    // (`value.enabled`), checked against the type `members` names it — never
-    // the feature's whole value compared against `members` keyed by member
-    // name, which is the bug B616 fixed in the server's own interpreter.
-    for (const [member, type] of Object.entries(members)) {
-      if (typeOf(value[member]) !== type) {
-        error(where, `features.${name}.${member} is ${JSON.stringify(value[member])}`, `must be ${type === "boolean" ? "true or false" : `a ${type}`}`);
+  }
+  for (const [kind, folders] of [["media", trip.mediaFolders], ["originals", trip.originalFolders]]) {
+    for (const folder of folders) {
+      if (!referenced.has(folder)) {
+        warn(where, `${kind}/${folder}/ is named by no day`,
+          "either a day is missing, or these photographs are not part of this trip");
       }
     }
-    if (SERVER_ONLY_FEATURES.includes(name)) {
-      warn(where, `features.${name} is the operator's to set, not the journal's`,
-        "this value is parsed and stored, but never read back for this capability — it does nothing here");
+  }
+}
+
+/** A day outside the trip it is filed under. The instance does not refuse
+ * this, and it is almost always a typo in one of the two dates. */
+function checkDates(trip, where) {
+  const from = trip.trip?.document?.dates?.from;
+  const to = trip.trip?.document?.dates?.to;
+  if (!from || !to) return;
+  for (const entry of trip.entries) {
+    const date = entry.document?.date ?? entry.fileDate;
+    if (date && (date < from || date > to)) {
+      warn(`${where}/${entry.slug}`, `this day is ${date} and the trip runs ${from} to ${to}`,
+        "correct whichever is wrong — the trip's dates decide what the site shows");
     }
   }
 }
 
-/** Cost lines, wherever they appear. */
-function checkCosts(where, list) {
-  if (!Array.isArray(list)) return;
-  list.forEach((line, index) => {
-    const at = `${where} costs[${index}]`;
-    if (typeOf(line) !== "object") { error(at, `is ${typeOf(line)}`, "a { label, amount } line"); return; }
-    checkKeys(at, Object.fromEntries(COST_KEYS.map((k) => [k, {}])), line, { tips: false, scope: "cost" });
-  });
-}
-
 /**
- * The document's `entry-date-is-a-real-calendar-date` named check (B644),
- * matching `isRealCalendarDate()` in the server's own `lib/validate/entry.ts`
- * exactly — the same Date-arithmetic, not a re-derivation of it: a `pattern`
- * rule can only check the YYYY-MM-DD shape (`\d{4}-\d{2}-\d{2}`), which
- * `2026-13-40` also matches, and `Date.parse`/`new Date(string)` silently
- * roll an out-of-range day or month into the next one rather than reject it
- * (`new Date("2026-02-30")` is the 2nd of March) — so the only honest check
- * is building the date back up with `Date.UTC` and asking whether what comes
- * out is what went in.
+ * The instance's own verdict on one document, through the door that exists
+ * for it.
+ *
+ * `?dryRun=true` writes nothing and answers with what it would have accepted.
+ * A `422 incomplete` is the interesting one: it names every section that is
+ * neither answered nor declined, and the sentence that would decline each —
+ * which is the thing a person has to write, and the thing no tool may write
+ * for them.
  */
-function isRealCalendarDate(value) {
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const [year, month, day] = value.split("-").map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
-}
-
-function daysBetween(start, end) {
-  const out = [];
-  for (let t = Date.parse(start); t <= Date.parse(end); t += 86400000) {
-    out.push(new Date(t).toISOString().slice(0, 10));
+async function askTheInstance(path, document, where) {
+  const existing = await call("GET", path);
+  const result = existing.ok
+    ? await call("PATCH", `${path}?dryRun=true`, { body: document, ifMatch: existing.etag })
+    : await call("PUT", `${path}?dryRun=true`, { body: document });
+  if (result.ok) return;
+  if (result.status === 401 || result.status === 403) {
+    error(where, `the instance refused the credential (${result.status})`,
+      "a validation run reads and dry-runs the whole journal, so it needs the owner's token");
+    return;
   }
-  return out;
+  error(where, refusal(result).split("\n").join("\n      "),
+    "this is the instance's own answer — fix the folder, and never invent a decline to get past it");
 }
 
-function checkJournal(user, only) {
+async function validateJournal(user) {
   const journal = readJournal(user);
-  const where = `content/${user}/config.json`;
+  if (journal.configProblem) error(`${user}/config.json`, journal.configProblem, "the file does not parse as JSON");
+  else if (!journal.config) error(user, "no config.json", "a journal folder has one, and it names who it belongs to");
 
-  if (journal.configProblem) error(where, "is not valid JSON", journal.configProblem);
-  else if (!journal.config) error(`content/${user}`, "has no config.json", "the journal's title, owner and languages live there");
-  else {
-    checkKeys(where, MODEL["config.json"].keys, journal.config, { scope: "journal" });
-
-    // B1569 — the same guard B1518 put on `trip.md`, one level up, and for
-    // the same reason: `publish.mjs` sent nine of `config.json`'s keys while
-    // the instance took eleven, so `ownerTel` and `travellers` went out in
-    // silence on every run.
-    for (const key of unaccountedKeys(MODEL["config.json"].keys, JOURNAL_UPDATE_DOORS,
-                                      { ...JOURNAL_NO_UPDATE_DOOR, ...JOURNAL_DEDICATED_DOORS })) {
-      warn(where,
-        `${key} has no update door in publish.mjs`,
-        "the instance knows this config.json key, but shared/journalFields.mjs lists it " +
-        "in neither JOURNAL_UPDATE_DOORS nor JOURNAL_NO_UPDATE_DOOR — editing it here " +
-        "will be accepted and never reach the site, the way ownerTel and travellers did. " +
-        "Add it to whichever it belongs in.");
-    }
-
-    // B1569 — and the same question for a day, which had no guard at all and
-    // is where almost every new field lands. Reported once for the journal
-    // rather than once per day: it is a fact about this repository's own list
-    // against the instance's, not about any particular entry.
-    const dayWhere = `content/${user}/trips/*/entries/*.md`;
-    for (const key of unaccountedKeys(MODEL["entries/YYYY-MM-DD-slug.md"].keys,
-                                      DAY_UPDATE_DOORS, DAY_DEDICATED_DOORS)) {
-      warn(dayWhere,
-        `${key} is never sent by publish.mjs`,
-        "the instance knows this day key, but shared/dayFields.mjs lists it in neither " +
-        "DAY_UPDATE_DOORS nor DAY_DEDICATED_DOORS — a day carrying it validates here and " +
-        "the value never reaches the site. Add it to whichever it belongs in.");
-    }
-
-    const features = journal.config.features ?? {};
-    checkFeatures(where, features);
-    const off = Object.entries(features).filter(([, v]) => v && v.enabled === false).map(([k]) => k);
-    if (off.length) tip(where, `features off: ${off.join(", ")}`, "each can be switched on with PATCH /api/v1/{user}/config");
+  for (const figure of journal.figures) {
+    if (figure.problem) error(`${user}/figures/${figure.id}.json`, figure.problem, "the file does not parse as JSON");
   }
-
-  const locales = journal.config?.locales ?? [];
+  // No cap on the library itself — the demo journal holds sixteen and the
+  // instance is perfectly happy with them. The ten is the most figures ONE
+  // TRIP may name, which is checked per trip below.
+  const figureIds = new Set(journal.figures.map((f) => f.id));
 
   for (const trip of journal.trips) {
-    if (only && trip.id !== only) continue;
-    const tripWhere = `content/${user}/trips/${trip.id}/trip.md`;
+    if (onlyTrip && trip.id !== onlyTrip) continue;
+    const where = `${user}/${trip.id}`;
 
-    if (!trip.trip) { error(tripWhere, "is missing", "a trip without trip.md is not a trip"); continue; }
-    for (const p of trip.trip.problems) error(tripWhere, `line ${p.line}: ${p.why}`, p.text);
-    checkKeys(tripWhere, MODEL["trip.md"].keys, trip.trip.data, { scope: "trip", unreadable: unreadableKeys(trip.trip.problems) });
+    if (!trip.trip) { error(where, "no trip.json", "every trip folder has one — costs and plan are sections of it"); continue; }
+    if (trip.trip.problem) { error(where, trip.trip.problem, "the file does not parse as JSON"); continue; }
 
-    // B1518 — `teaser`, then `cover`, each went out in silence for a while
-    // because `publish.mjs`'s own key lists fell behind what `trip.md` is
-    // actually allowed to carry. TRIP_UPDATE_DOORS is that file's own list of
-    // what it can send once a trip exists; a key content-model.json knows
-    // and that list does not (and that is not one of the three with no
-    // update door on purpose) is exactly the next `teaser` waiting to happen.
-    for (const key of unaccountedKeys(MODEL["trip.md"].keys, TRIP_UPDATE_DOORS,
-                                      Object.fromEntries([...TRIP_NO_UPDATE_DOOR].map((k) => [k, "no update door, on purpose"])))) {
-      warn(tripWhere,
-        `${key} has no update door in publish.mjs`,
-        "the instance knows this trip.md key, but publish.mjs's TRIP_UPDATE_DOORS " +
-        "(shared/tripFields.mjs) does not list it — editing it on a trip that already " +
-        "exists will be accepted here and never reach the site, the way teaser and " +
-        "cover once did. Add it there once publish.mjs can actually send it.");
-    }
-
-    const data = trip.trip.data;
-    if (data.id && data.id !== trip.id) error(tripWhere, `id is ${JSON.stringify(data.id)} but the folder is ${trip.id}`, "they must match");
-    if (data.start && data.end && Date.parse(data.end) < Date.parse(data.start)) {
-      error(tripWhere, "end is before start");
-    }
-    if (!trip.trip.body) tip(tripWhere, "has no intro prose", "the paragraphs under the frontmatter open the trip");
-    if (data.visibility === undefined) tip(tripWhere, "visibility is not set", "absent reads as private — nobody but you and the people on it");
-
-    // These two are prose about a whole absent OPTIONAL file, not a rule
-    // about a key inside one — nothing the document's closed vocabulary
-    // publishes (it says `costs.md`/`plan.md` are `optional`, not what to
-    // tell somebody who has neither), so they stay written here, the same as
-    // every other disk-only judgement this client makes for itself.
-    if (!trip.costs) {
-      tip(`content/${user}/trips/${trip.id}/`, "has no costs.md",
-        "a trip with a budget shows how the spending is tracking against it");
-    }
-    else {
-      const costsWhere = `content/${user}/trips/${trip.id}/costs.md`;
-      for (const p of trip.costs.problems) error(costsWhere, `line ${p.line}: ${p.why}`, p.text);
-      checkKeys(costsWhere, MODEL["costs.md"].keys, trip.costs.data, { unreadable: unreadableKeys(trip.costs.problems) });
-      checkCosts(costsWhere, trip.costs.data.costs);
-      const budget = trip.costs.data.budget;
-      if (budget && typeOf(budget) === "object") {
-        for (const key of ["total", "days", "currency"]) {
-          if (budget[key] === undefined) error(costsWhere, `budget.${key} is missing`, "a budget needs all three");
-        }
-        // B644 — `budget-total-and-days-are-positive`, matching
-        // `validateCostsPut` in the server's own `lib/validate/costs.ts`:
-        // both refuse a `total`/`days` that is not a positive, finite
-        // number — zero or negative is refused rather than written and read
-        // back as no budget at all.
-        for (const key of ["total", "days"]) {
-          if (budget[key] === undefined) continue;
-          if (typeof budget[key] !== "number" || !Number.isFinite(budget[key]) || budget[key] <= 0) {
-            error(costsWhere, `budget.${key} is ${JSON.stringify(budget[key])}`, "a positive number");
-          }
-        }
+    // A folder written by the old tools, spotted by what it still has. Left
+    // as an error rather than converted here: converting is `convert.mjs`,
+    // it writes a new folder, and it reports four decisions only a person can
+    // make.
+    for (const old of ["trip.md", "costs.md", "plan.md"]) {
+      if (existsSync(join(trip.dir, old))) {
+        error(where, `${old} is still here — this folder predates the v2 content model`,
+          "node .claude/skills/shared/convert.mjs <user> writes the converted folder beside it");
       }
     }
-    if (!trip.plan) {
-      if (data.status === "upcoming") {
-        tip(`content/${user}/trips/${trip.id}/`, "has no plan.md",
-          "an upcoming trip with no plan.md shows no route on its map");
+
+    checkOrphanFolders(journal, trip, where);
+    checkDates(trip, where);
+
+    // A trip names figures out of the journal's library; one it names that is
+    // not there is a refusal on the wire and a missing walker on the page.
+    const named = trip.trip.document?.figures?.figures ?? [];
+    for (const id of named) {
+      if (!figureIds.has(id)) {
+        error(where, `this trip names the figure "${id}" and figures/${id}.json is not there`,
+          "create it, or take the name off the trip — the instance refuses a trip naming a figure it does not have");
       }
-    } else {
-      const planWhere = `content/${user}/trips/${trip.id}/plan.md`;
-      for (const p of trip.plan.problems) error(planWhere, `line ${p.line}: ${p.why}`, p.text);
-      checkKeys(planWhere, MODEL["plan.md"].keys, trip.plan.data, { unreadable: unreadableKeys(trip.plan.problems) });
+    }
+    if (named.length > 10) {
+      error(where, `this trip names ${named.length} figures`, "a trip may name at most ten");
     }
 
-    const slugs = new Map();
-    const titleSlugs = new Map();
-    let daysWithCosts = 0;
-    const covered = new Set();
-    // Absent means every track on, which is the instance's default and the one
-    // an owner should not have to find.
-    const tracks = { costs: true, coordinates: true, photos: true, ...(data.tracks ?? {}) };
-
+    const seen = new Map();
     for (const entry of trip.entries) {
-      const entryWhere = `content/${user}/trips/${trip.id}/entries/${entry.file}`;
-      for (const p of entry.problems) error(entryWhere, `line ${p.line}: ${p.why}`, p.text);
-      const unreadEntryKeys = unreadableKeys(entry.problems);
-
-      // Three things this day should not be nudged about, because the answer
-      // is already settled and asking again is how an agent ends up inventing
-      // a value to make a list go quiet:
-      //
-      //   - the day said `without: [costs]` — it has answered;
-      //   - the trip does not track it at all;
-      //   - the journal has one language, so there is nothing to translate.
-      for (const declinedTrack of [
-        ...[entry.data.without ?? []].flat(),
-        ...[entry.data.unrecorded ?? []].flat(),
-      ]) {
-        errored.add(`${entryWhere}|${declinedTrack === "coordinates" ? "lat" : declinedTrack}`);
-      }
-      for (const [track, on] of Object.entries(tracks)) {
-        if (on === false) errored.add(`${entryWhere}|${track === "coordinates" ? "lat" : track}`);
-      }
-      if (locales.length < 2) errored.add(`${entryWhere}|translations`);
-      checkKeys(entryWhere, MODEL["entries/YYYY-MM-DD-slug.md"].keys, entry.data, { scope: "day", unreadable: unreadEntryKeys });
-      if (!entry.body) error(entryWhere, "has no prose", "the body under the frontmatter is the day itself");
-
-      if (!entry.fileDate) error(entryWhere, "is not named YYYY-MM-DD-slug.md", "the date orders it and the slug addresses it");
-      else if (entry.data.date && entry.data.date !== entry.fileDate) {
-        error(entryWhere, `date is ${entry.data.date} but the filename says ${entry.fileDate}`, "they must agree");
-      }
-      if (slugs.has(entry.slug)) error(entryWhere, `two files share the slug ${entry.slug}`, `the other is ${slugs.get(entry.slug)}`);
-      slugs.set(entry.slug, entry.file);
-
-      // B1520 — the instance derives a day's real slug from its TITLE, not
-      // from the filename above. Two files can carry distinct filenames and
-      // still collide once published, and that collision used to surface
-      // only at publish's step 50 of 52, after every photograph had already
-      // gone up. `titleSlugify` mirrors the instance's own rule (lib/slug.ts)
-      // rather than the filename it never sees.
-      if (typeof entry.data.title === "string" && entry.data.title) {
-        const titleSlug = titleSlugify(entry.data.title);
-        if (titleSlugs.has(titleSlug) && titleSlugs.get(titleSlug) !== entry.file) {
-          error(entryWhere, `title slugs the same as ${titleSlugs.get(titleSlug)} ("${titleSlug}")`,
-            "the instance derives a day's address from its title, and only one day can hold a " +
-            "slug within a trip — give this day a title that differs in a word");
-        } else {
-          titleSlugs.set(titleSlug, entry.file);
-        }
-      }
-
-      const date = entry.data.date ?? entry.fileDate;
-      if (date) {
-        // B644 — `entry-date-is-a-real-calendar-date`. The filename and the
-        // `pattern` rule on `date` both only check the YYYY-MM-DD shape;
-        // `2026-13-40` (or a real filename typo like it) passes both and is
-        // exactly what this catches.
-        if (!isRealCalendarDate(date)) {
-          error(entryWhere, `date ${date} is not a real calendar date`, "expected a real calendar date, as YYYY-MM-DD");
-        }
-        covered.add(date);
-        if (data.start && data.end && (date < data.start || date > data.end)) {
-          error(entryWhere, `date ${date} is outside the trip (${data.start} … ${data.end})`, "widen the trip, or move the day");
-        }
-      }
-
-      if (Array.isArray(entry.data.costs) && entry.data.costs.length) daysWithCosts += 1;
-      checkCosts(entryWhere, entry.data.costs);
-
-      // The trip's own contract — `tracks:` on trip.md, absent meaning all of
-      // them on. The instance answers 422 `incomplete_day` for a day that says
-      // nothing about something the trip keeps track of, and names both how to
-      // send it and how to decline it. Checked here so that is found before a
-      // publish run rather than in the middle of one.
-      // Both answers settle the row. `unrecorded` is B560's third one — *there
-      // was some of this and nobody has it* — and a day carrying it has
-      // answered the trip just as surely as one that declined.
-      const declined = new Set([
-        ...[entry.data.without ?? []].flat(),
-        ...[entry.data.unrecorded ?? []].flat(),
-      ]);
-      for (const [track, answered] of [
-        ["costs", Array.isArray(entry.data.costs) && entry.data.costs.length > 0],
-        ["coordinates", entry.data.lat !== undefined && entry.data.lng !== undefined],
-        ["photos", Array.isArray(entry.data.gallery) && entry.data.gallery.length > 0],
-      ]) {
-        // A track whose backing key the parser never reached is not a
-        // confirmed silence either — see unreadableKeys() above.
-        if (tracks[track] === false || answered || declined.has(track) ||
-            unreadEntryKeys.has(track === "coordinates" ? "lat" : track === "photos" ? "gallery" : track)) continue;
-        errored.add(`${entryWhere}|${track === "coordinates" ? "lat" : track}`);
-        error(entryWhere, `the trip tracks ${track} and this day says nothing about it`,
-          `Ask the person what this day had. If it had some, send it. If it genuinely had ` +
-          `none, \`"${track}": false\` on the write says so, and is written into the day as ` +
-          `\`without: [${track}]\`. A trip-level costs.md is NOT an answer for a day — the ` +
-          `budget is what was paid before leaving, not what this day cost. Never send false ` +
-          `to make this line go away.`);
-      }
-
-      // An error and not a warning: the instance refuses this day outright
-      // (400 invalid_entry). The boundary between the two marks is exactly
-      // "will this be refused", and this one used to sit on the wrong side —
-      // a publish run got fourteen days in before finding out.
-      if (locales.length > 1 && !entry.data.translations) {
-        errored.add(`${entryWhere}|translations`);
-        error(entryWhere,
-          `the journal declares ${locales.join(", ")} and this day has no translations`,
-          "send them — or, if the journal is really written in one language, that is the " +
-          "journal's to fix: narrow locales in config.json");
-      }
-
-      // `weather` is `apiOnly` — a file never carries it — but it is also
-      // `offerable`: an opt-in worth telling somebody about, not plumbing to
-      // stay quiet about. It needs coordinates (the server refuses a guess
-      // from the trip's other days or the nearest city), so a day with
-      // neither lat nor lng gets no tip at all — there is nothing honest to
-      // offer it. Two different sentences past that point, because "this
-      // could carry weather" and "this could carry weather, but nobody has
-      // switched it on yet" are not the same finding: B573's own bug was a
-      // journal-level toggle nobody knew existed, sitting one level under
-      // this one (the server capability), and a tip that skipped over it
-      // would recreate the exact failure it exists to fix.
-      if (entry.data.lat !== undefined && entry.data.lng !== undefined && WEATHER_CAPABLE) {
-        if (journal.config?.features?.weather?.enabled !== true) {
-          tip(entryWhere, "weather is not set",
-            "this day has coordinates, so the Open-Meteo archive could fill in what the weather " +
-            "actually was — but this journal has not switched weather on. Add " +
-            '`"weather": { "enabled": true }` to config.json\'s features, then publish with ' +
-            "--weather. Never send a reading from memory: without the journal's own opt-in the " +
-            "request is accepted and does nothing, which is worse than refusing it outright.",
-            "weather");
-        } else {
-          tip(entryWhere, "weather is not set",
-            "this day has coordinates — publish with --weather to ask the server to look up what " +
-            "it actually was, for this lat/lng and date, from the Open-Meteo archive. A day with " +
-            "no coordinates gets nothing rather than a guess, and so does this one until you ask.",
-            "weather");
-        }
-      }
-
-      const gallery = entry.data.gallery;
-      if (!unreadEntryKeys.has("gallery") &&
-          (!gallery || (Array.isArray(gallery) && gallery.length === 0)) && tracks.photos !== false && !declined.has("photos")) {
-        tip(entryWhere, "has no photographs", "POST them to …/trips/<trip>/media with this day's slug", "photos");
-      } else if (Array.isArray(gallery)) {
-        gallery.forEach((item, index) => {
-          const at = `${entryWhere} gallery[${index}]`;
-          if (typeOf(item) !== "object") { error(at, `is ${typeOf(item)}`, "a { src, type } item"); return; }
-          checkKeys(at, Object.fromEntries(GALLERY_KEYS.map((k) => [k, {}])), item, {
-            tips: false,
-            scope: "gallery",
-          });
-          const file = galleryFile(journal, trip, item.src);
-          if (!file) error(at, `src ${JSON.stringify(item.src)} is not a /media/<trip>/<day>/<file> path`);
-          else if (!existsSync(file)) error(at, `${item.src} is not on disk`, `looked for ${file.replace(journal.dir, `content/${user}`)}`);
-          else {
-            const extension = basename(file).split(".").pop().toLowerCase();
-            // The instance's own list, from /api/health. `.jpg` is the trap:
-            // it is the commonest extension there is and the server names the
-            // format `jpeg`, so the two have to be reconciled here rather than
-            // by keeping a second list.
-            const allowed = (LIMITS[item.type === "video" ? "videoFormats" : "imageFormats"] ?? []).map(
-              (format) => (format === "jpeg" ? ["jpeg", "jpg"] : [format]),
-            ).flat();
-            if (allowed.length && !allowed.includes(extension)) {
-              error(at, `.${extension} is not a ${item.type} format this instance takes`, `one of ${allowed.join(", ")}`);
-            }
-            const bytes = statSync(file).size;
-            const ceiling = item.type === "video" ? LIMITS.videoMaxBytes : LIMITS.imageMaxBytes;
-            if (bytes === 0) error(at, `${item.src} is an empty file`);
-            else if (ceiling && bytes > ceiling) {
-              error(at, `${item.src} is ${Math.round(bytes / 1024 / 1024)} MB`,
-                `this instance takes at most ${Math.round(ceiling / 1024 / 1024)} MB per file`);
-            }
-          }
-          if (item.type === "image" && (!item.width || !item.height)) {
-            warn(at, "has no width and height", "the page reserves no space for it, so the layout jumps as it loads");
-          }
-        });
-      }
+      const dayWhere = `${where}/${entry.slug}`;
+      if (entry.problem) { error(dayWhere, entry.problem, "the file does not parse as JSON"); continue; }
+      checkDayIdentity(dayWhere, entry);
+      checkMedia(journal, trip, entry, dayWhere);
+      if (seen.has(entry.slug)) error(dayWhere, `two files claim the slug ${entry.slug}`, "one day, one address — rename one of them");
+      seen.set(entry.slug, entry.file);
     }
 
-    // B1522 — a day whose coordinates are plainly far from the previous
-    // day's and names no transport draws no leg on the map, and until now
-    // the only signal was "transportMode is not set" sitting among 290 tips
-    // indistinguishable from every other unset field. Comparing consecutive
-    // days' coordinates is a cross-day, coordinates-and-files question —
-    // exactly the half AGENTS.md says the helper keeps for itself.
-    const MOVEMENT_WARN_KM = 5;
-    const dayPositions = [];
+    if (offline) continue;
+    await askTheInstance(`/api/v2/${user}/trips/${trip.id}`, trip.trip.document, where);
     for (const entry of trip.entries) {
-      const date = entry.data.date ?? entry.fileDate;
-      if (!date || entry.data.lat === undefined || entry.data.lng === undefined) continue;
-      const last = dayPositions[dayPositions.length - 1];
-      if (last && last.date === date) continue; // a second entry on a day already recorded
-      dayPositions.push({
-        date,
-        lat: entry.data.lat,
-        lng: entry.data.lng,
-        entryWhere: `content/${user}/trips/${trip.id}/entries/${entry.file}`,
-        hasMode: entry.data.transportMode !== undefined,
-      });
-    }
-    for (let i = 1; i < dayPositions.length; i++) {
-      const prev = dayPositions[i - 1];
-      const cur = dayPositions[i];
-      const km = haversineKm(prev.lat, prev.lng, cur.lat, cur.lng);
-      if (km > MOVEMENT_WARN_KM && !cur.hasMode) {
-        warn(cur.entryWhere,
-          `${cur.date} is ${km.toFixed(1)} km from ${prev.date} and names no transport`,
-          "no leg is drawn between them — transportMode is read as the leg into the arriving " +
-          `day, so it belongs on ${cur.date}, not ${prev.date}`);
-      }
-    }
-    // travelScene is only actionable on a day that actually draws a leg — a
-    // tip to enable animation on a day with no transportMode is advice with
-    // nothing to act on.
-    for (let i = found.length - 1; i >= 0; i--) {
-      const f = found[i];
-      if (f.key !== "travelScene" || f.severity !== "tip") continue;
-      const entry = trip.entries.find((e) => `content/${user}/trips/${trip.id}/entries/${e.file}` === f.where);
-      if (entry && entry.data.transportMode === undefined) found.splice(i, 1);
-    }
-
-    if (trip.costs?.data?.budget && daysWithCosts === 0 && trip.entries.length > 0) {
-      warn(`content/${user}/trips/${trip.id}/`, `a budget is set and none of the ${trip.entries.length} days records any spending`,
-        "either the days really cost nothing — say so with costs: false — or the day-level costs never left this machine");
-    }
-    if (data.start && data.end) {
-      const missing = daysBetween(data.start, data.end).filter((d) => !covered.has(d));
-      if (missing.length) {
-        const shown = missing.slice(0, 6).join(", ") + (missing.length > 6 ? `, … (${missing.length} in all)` : "");
-        tip(`content/${user}/trips/${trip.id}/`, `${missing.length} date${missing.length === 1 ? " in the trip has" : "s in the trip have"} no day`, shown);
-      }
-    }
-    for (const folder of trip.mediaFolders) {
-      if (!slugs.has(folder)) {
-        warn(`content/${user}/trips/${trip.id}/media/${folder}/`, "belongs to no day", "the photographs are there and nothing shows them");
-      }
+      if (!entry.document) continue;
+      await askTheInstance(
+        `/api/v2/${user}/trips/${trip.id}/days/${entry.slug}`,
+        { ...entry.document, slug: entry.slug },
+        `${where}/${entry.slug}`,
+      );
     }
   }
 }
 
-// ── run ────────────────────────────────────────────────────────────────────
-const only = arg("trip");
-const namedUser = arg("user");
-const users = namedUser ? [namedUser] : usernames();
-if (users.length === 0) {
-  console.error("Nothing in content/ to check. A journal lives at content/<username>/.");
+// ── which journals ─────────────────────────────────────────────────────────
+const all = usernames();
+if (!all.length) {
+  const suggestion = suggestedContentDir();
+  console.error(
+    `Nothing journal-shaped under ${CONTENT}.` +
+    (suggestion ? `\nDid you mean FERNSCOUT_CONTENT_DIR=${suggestion}?` : ""),
+  );
   process.exit(1);
 }
-
-// B1402 — CONTENT held *something*, so the check above never fired, but
-// none of it looked like a journal: readJournal() would report every one
-// of these as "has no config.json", which is technically true and useless
-// when the real cause is that CONTENT is pointed at the wrong depth. Only
-// for an auto-discovered listing — an explicit --user names a journal by
-// hand, and that refusal (or lack of one) is its own, unrelated to depth.
-if (!namedUser && !users.some((user) => isJournalShaped(join(CONTENT, user)))) {
-  const likely = suggestedContentDir();
-  if (likely) {
-    console.error(
-      `Nothing that looks like a journal directly under ${CONTENT} — found ${users.join(", ")}, ` +
-      "none with both a config.json and a trips/ directory.\n" +
-      `${likely} looks like the journal directory this was meant to point at. Point ` +
-      "FERNSCOUT_CONTENT_DIR there, or run this from a checkout where content/ already is.",
-    );
-    process.exit(1);
-  }
-}
-
-let LIMITS = {};
-// The server's own ceiling for weather — `/api/health`'s `capabilities.weather`.
-// A journal's `config.json` still has to opt in on top of this (checked per
-// entry, below); this is only "can this instance ever say yes at all".
-let WEATHER_CAPABLE = false;
-// The live list of capability names — `/api/health`'s `capabilities` keys,
-// the same set `parseFeatures`'s trailing loop in lib/config.ts checks an
-// unknown `features` key against. Empty when the document could not be had
-// at all (offline with no cache, or an unreachable instance and no cache
-// either): `checkFeatures` skips the unknown-name check rather than invent a
-// list of its own to check against.
-let CAPABILITY_NAMES = [];
-
-// The file shape, from the live document when there is one to read, the
-// committed snapshot otherwise. `resolveModel()` never throws — an instance
-// with no content-model.json yet is the ordinary case B609 exists to keep
-// working through, not a failure to report as one. Resolved before the
-// `openapi()` block below because `crosscheck()` needs MODEL to know which
-// keys this file shape already offers.
-{
-  const resolved = await resolveModel({ offline: has("offline"), refresh: has("refresh") });
-  MODEL = resolved.MODEL;
-  COST_KEYS = resolved.COST_KEYS;
-  GALLERY_KEYS = resolved.GALLERY_KEYS;
-  if (!has("json")) console.log(`File shape from ${resolved.source}\n`);
-  // Each of these is a named edge case W41 asks never to fail quietly: an
-  // `assert` kind this client does not know, a `named` check it has not
-  // implemented, a rejected `pattern`, or a manifest whose rules folded into
-  // nothing usable for a file that should have them.
-  for (const notice of resolved.notices) warn("(content-model)", notice.message);
-}
-
-try {
-  const { doc, from, site } = await openapi({ offline: has("offline"), refresh: has("refresh") });
-
-  // Everything the instance is willing to say about itself, read once. From
-  // here on this script has no opinion of its own about what a field may be.
-  DOC = doc;
-  API = {
-    trip: requestSchema(doc, "/api/v1/{user}/trips", "post") ?? {},
-    day: requestSchema(doc, "/api/v1/{user}/trips/{trip}/days", "post") ?? {},
-    journal: {
-      properties: {
-        ...(requestSchema(doc, "/api/v1/journals", "post")?.properties ?? {}),
-        ...(requestSchema(doc, "/api/v1/{user}/config", "patch")?.properties ?? {}),
-      },
-    },
-    cost: deref({ $ref: "#/components/schemas/Cost" }, doc) ?? {},
-    gallery: deref({ $ref: "#/components/schemas/GalleryItem" }, doc) ?? {},
-  };
-
-  try {
-    const reported = await health({ offline: has("offline"), refresh: has("refresh") });
-    LIMITS = reported.doc?.media ?? {};
-    WEATHER_CAPABLE = reported.doc?.capabilities?.weather?.enabled === true;
-    CAPABILITY_NAMES = Object.keys(reported.doc?.capabilities ?? {});
-    // `api.mjs` already refetches a cache with no `media` block on any normal
-    // (online) run, so this only fires with `--offline` or when the network
-    // is down and the fetch fell back to that same stale copy — the cases
-    // where a fresh document genuinely could not be had. Said in the same
-    // place as the schema-unavailable notice below, for the same reason: a
-    // check that did not run must look different from one that ran and found
-    // nothing.
-    if (!reported.doc?.media) {
-      warn("(health)", `no media block in the ${reported.from} /api/health document`,
-        "the photograph format and size checks did not run — retry online, or with --refresh");
-    }
-    const off = Object.entries(reported.doc?.capabilities ?? {})
-      .filter(([, state]) => !state.enabled)
-      .map(([name, state]) => `${name} (${state.reason ?? "off"})`);
-    if (off.length && !has("json")) {
-      console.log(`This server cannot offer: ${off.join(", ")}\n`);
-    }
-  } catch (failure) {
-    warn("(health)", failure.message,
-      "the upload formats and size limits were not checked — /api/health is where they live");
-  }
-
-  if (!has("json")) console.log(`Checked against ${site} — schema from ${from}\n`);
-  for (const drift of crosscheck(doc, MODEL)) {
-    const unknownHere = drift.why.startsWith("the instance accepts");
-    say(unknownHere ? "tip" : "warn", drift.where, `${drift.key}: ${drift.why}`,
-      unknownHere
-        ? "an option these tools do not know about yet"
-        : "either this instance is older than these tools, or the key is file-only");
-  }
-} catch (failure) {
-  warn("(schema)", failure.message, "checked the file format only; the instance's own rules were not consulted");
-}
-
+const users = onlyUser ? [onlyUser] : all;
 for (const user of users) {
-  try { checkJournal(user, only); }
-  catch (failure) { error(`content/${user}`, failure.message); }
-}
-
-// A field that produced an error does not also get a tip: "costs is not set"
-// printed under "the trip tracks costs and this day says nothing about it" is
-// the same sentence twice, and the second makes the first read as advice.
-for (let i = found.length - 1; i >= 0; i -= 1) {
-  const item = found[i];
-  if (item.severity === "tip" && item.key && errored.has(`${item.where}|${item.key}`)) {
-    found.splice(i, 1);
+  if (!isJournalShaped(join(CONTENT, user))) {
+    error(user, "this does not look like a journal", "a journal folder has a config.json and a trips/ directory");
+    continue;
   }
+  await validateJournal(user);
 }
 
-const counts = { error: 0, warn: 0, tip: 0 };
-for (const item of found) counts[item.severity] += 1;
+// ── say it ─────────────────────────────────────────────────────────────────
+const errors = found.filter((f) => f.severity === "error");
+const warnings = found.filter((f) => f.severity === "warn");
 
-if (has("json")) {
-  console.log(JSON.stringify({ counts, found }, null, 2));
+if (asJson) {
+  console.log(JSON.stringify({ site: offline ? null : SITE, found }, null, 1));
 } else {
-  const MARK = { error: "✗", warn: "!", tip: "·" };
-
-  // The same tip on fourteen days is one thing to know, not fourteen lines to
-  // scroll past. Anything said three or more times is said once, with a count
-  // and where to look; --all prints every occurrence.
-  const groups = new Map();
-  for (const item of found) {
-    const key = `${item.severity}||${item.message}||${item.fix ?? ""}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(item);
-  }
-  const repeated = has("all") ? new Set() : new Set([...groups].filter(([, v]) => v.length >= 3).map(([k]) => k));
-
-  for (const severity of ["error", "warn", "tip"]) {
-    const collapsed = [...groups].filter(([k]) => repeated.has(k) && k.startsWith(`${severity}||`));
-    if (collapsed.length) console.log(`\n${severity === "tip" ? "Options not set" : severity === "warn" ? "Worth a look" : "Errors"}, across several files`);
-    for (const [, items] of collapsed) {
-      const where = items.slice(0, 3).map((i) => i.where.split("/").pop()).join(", ");
-      console.log(`  ${MARK[severity]} ${items[0].message} — ${items.length} files (${where}${items.length > 3 ? ", …" : ""})`);
-      if (items[0].fix) console.log(`      ${items[0].fix}`);
-    }
-  }
-
-  let last = null;
-  for (const severity of ["error", "warn", "tip"]) {
-    for (const item of found) {
-      if (item.severity !== severity) continue;
-      if (repeated.has(`${item.severity}||${item.message}||${item.fix ?? ""}`)) continue;
-      if (item.where !== last) { console.log(`\n${item.where}`); last = item.where; }
-      console.log(`  ${MARK[severity]} ${item.message}${item.fix ? `\n      ${item.fix}` : ""}`);
-    }
+  for (const f of found) {
+    console.log(`${f.severity === "error" ? "✗" : "!"} ${f.where}\n    ${f.message}${f.fix ? `\n    → ${f.fix}` : ""}`);
   }
   console.log(
-    `\n${counts.error} error${counts.error === 1 ? "" : "s"}, ` +
-    `${counts.warn} warning${counts.warn === 1 ? "" : "s"}, ${counts.tip} tip${counts.tip === 1 ? "" : "s"}.`,
+    found.length
+      ? `\n${errors.length} error${errors.length === 1 ? "" : "s"}, ${warnings.length} warning${warnings.length === 1 ? "" : "s"}` +
+        (offline ? " — disk checks only; the instance was not asked what it would accept." : "")
+      : offline
+        ? "\nNothing wrong on disk. The instance was not asked what it would accept (--offline)."
+        : `\nNothing wrong, and ${SITE} would accept all of it.`,
   );
-  if (counts.error) console.log("Publishing is refused while there are errors.");
 }
-
-// `process.exitCode`, NOT `process.exit()`. When stdout is a pipe — which it
-// is for every caller that reads `--json`, `selftest.mjs` included — writes to
-// it are asynchronous, and `process.exit()` tears the process down with the
-// tail of the report still unwritten. An 86 KB report arrived as 65 KB of
-// perfectly good JSON ending mid-string, and the reader could only say "the
-// validator did not answer with JSON". Setting the code lets Node exit once
-// stdout has drained.
-process.exitCode = counts.error ? 1 : 0;
+process.exit(errors.length ? 1 : 0);

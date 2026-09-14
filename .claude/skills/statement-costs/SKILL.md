@@ -51,7 +51,9 @@ The first run prints what the statement holds: the spending day by day, the
 same payments **by merchant** biggest-first, what was left out (transfers,
 money coming in — counted, never silently dropped), and **what the money
 actually cost** — the amount debited divided by the amount received, per
-currency. That last number is what `trip.md`'s `rates:` wants, and it is easy
+currency. That number is v1's convention, and a trip's `rates` is not: v2 rates
+against the euro, so send `rates: {"currencies": [...]}` and let the server rate
+them from the ECB rather than copying a number across. It is easy
 to write upside down.
 
 **Send `--from` and `--to`.** Without them you get the whole statement, which
@@ -102,7 +104,7 @@ total back, along with anything you were unsure about. Costs are
 numbers; `costsVisibility: guests` narrows it.
 
 The rates are **not** written by any of this. If the trip has none, offer them:
-`PUT /api/v1/<user>/trips/<trip>/rates`.
+`PATCH /api/v2/<user>/trips/<trip>` with `{"rates": {"currencies": ["EUR"]}}`.
 
 ## Another bank
 

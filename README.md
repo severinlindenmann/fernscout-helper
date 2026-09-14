@@ -47,7 +47,7 @@ Every tool here does one of three things.
 | --- | --- |
 | **Extract** | Get what already exists out of wherever it is stuck — a phone's photo library, a bank's CSV export, a chat log, a folder of camera files |
 | **Create** | Ask for what only a person knows — what happened that day, what the flights cost, who was there — and write it down without inventing the rest |
-| **Format** | Turn all of it into the journal's own shape: `trip.md`, one entry per day, sized galleries, costs, coordinates |
+| **Format** | Turn all of it into the journal's own shape: `trip.json`, one document per day, sized galleries, costs, coordinates |
 
 ## The tools
 
@@ -76,9 +76,9 @@ own format.
 
 ```
 content/<you>/trips/<trip>/
-  trip.md                     what the trip was, and the budget
-  costs.md                    what was spent before leaving
-  entries/2026-06-23-….md     one day: what happened, its photos, what it cost
+  trip.json                   what the trip was, the budget and the planned
+                              route — costs and plan are sections of it
+  entries/2026-06-23-….json   one day: what happened, its photos, what it cost
   media/…                     the pictures, resized, with every trace of
                               metadata removed
 ```

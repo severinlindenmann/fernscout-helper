@@ -59,7 +59,13 @@ export function inSync(path) {
   if (root === "inbox") return segments.length >= 3;
   if (root !== "trips") return false;
   if (segments.length < 3) return false;
-  if (segments[2].toLowerCase() === "originals") return false;
+  // `originals/` is IN, since the instance put it in (fernscout B1719). It
+  // was excluded on both sides on the same reasoning — an order of magnitude
+  // larger than what the site serves, back them up from the filesystem — which
+  // is no reasoning at all for the owner of a hosted journal, who has no
+  // filesystem to back them up from. A pull used to restore every photograph
+  // at a quarter of its pixels and report the omission honestly enough that
+  // nobody had to notice what it cost.
   if (segments.length === 3 && segments[2].toLowerCase() === "track.json") return false;
   return true;
 }
@@ -137,9 +143,9 @@ export function writeBase(dir, { site, user, files, syncedAt }) {
  * **A base entry remembers both sides**: `hash` is what this folder held at
  * the last sync and `remote` is what the site held. One hash for both was the
  * obvious version and it does not survive a real push — the up leg goes
- * through typed routes that normalise what they are given (frontmatter key
- * order, a slug the instance assigns), so a file that landed perfectly is
- * *not* byte-identical to the one that was sent. With one hash, every
+ * through typed routes that normalise what they are given (key order, the
+ * server-owned fields a stored day carries), so a file that landed perfectly
+ * is *not* byte-identical to the one that was sent. With one hash, every
  * successful push left the two sides permanently differing and the next run
  * called it a conflict. Asking "did each side move from where it was" instead
  * of "do the two agree" is what makes normalisation invisible, which is what

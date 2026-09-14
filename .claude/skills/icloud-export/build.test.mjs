@@ -83,7 +83,13 @@ try {
   process.exit(1);
 }
 
-const mediaDir = join(CONTENT_DIR, "trips", TRIP, "media", "fixturetown");
+// The folder is named by the day's whole slug since B1715 — `<date>-<place>`,
+// which is what the instance calls it — so it is found rather than spelled out
+// here; the date comes from the fixtures' own EXIF and is not this test's
+// business.
+const mediaRoot = join(CONTENT_DIR, "trips", TRIP, "media");
+const dayFolder = existsSync(mediaRoot) ? readdirSync(mediaRoot).find((n) => n.endsWith("fixturetown")) : null;
+const mediaDir = dayFolder ? join(mediaRoot, dayFolder) : join(mediaRoot, "fixturetown");
 const written = existsSync(mediaDir) ? readdirSync(mediaDir).sort() : [];
 check(`build.mjs wrote all ${ORIENTATIONS.length} fixtures`, written.length === ORIENTATIONS.length,
   `found ${written.length}: ${written.join(", ")}`);

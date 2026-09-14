@@ -9,3 +9,6 @@ node_modules/
 
 # Bank statements. Somebody's account history is not this repository's business.
 /import/
+
+# Worktrees for branch work — the checkout stays on main and clean.
+.claude/worktrees/

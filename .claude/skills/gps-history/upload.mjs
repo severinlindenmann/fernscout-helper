@@ -32,18 +32,31 @@ token(); // fail now, with the how-to, rather than after the upload
 
 const bytes = (n) => `${(n / 1024 / 1024).toFixed(1)} MB`;
 
-/** Stage the export in the journal's inbox, where it belongs to no day. */
+/**
+ * Stage the export where it belongs to no day yet.
+ *
+ * v2 has one upload door for every kind of bytes — `POST .../media`, with an
+ * `intent` saying what they are — rather than a separate `/inbox` POST. A
+ * `gps_history` intent with no trip and no day is exactly what the inbox was:
+ * staged, readable back, and attached to nothing.
+ */
 async function stage(path) {
   const name = basename(path);
   const form = new FormData();
   // Streamed rather than read whole: a Takeout can be hundreds of megabytes,
   // and this machine is somebody's laptop.
-  form.append("files", await fileFrom(path, name));
-  form.append("meta", JSON.stringify({ description: "" }));
-  const result = await call("POST", `/api/v1/${user}/inbox`, { body: form });
-  if (!result.ok) die(`  inbox refused it:\n${refusal(result)}`);
-  const item = result.body.items?.[0];
-  if (!item) die(`  the inbox accepted nothing back: ${JSON.stringify(result.body).slice(0, 200)}`);
+  form.set("file", await fileFrom(path, name));
+  form.set("intent", JSON.stringify({
+    kind: "gps_history",
+    declined: {
+      trip: "a location history belongs to the journal, not to one trip",
+      day: "a location history spans months, not one day",
+    },
+  }));
+  const result = await call("POST", `/api/v2/${user}/media`, { body: form });
+  if (!result.ok) die(`  the upload was refused:\n${refusal(result)}`);
+  const item = result.body.items?.[0] ?? result.body;
+  if (!item?.id && !item?.src) die(`  the upload accepted nothing back: ${JSON.stringify(result.body).slice(0, 200)}`);
   return item;
 }
 
@@ -67,9 +80,12 @@ async function main() {
     const staged = await stage(path);
     console.log(`  staged as ${staged.id}${staged.duplicate ? " (already there)" : ""}`);
 
-    const body = { kind: "gps", inbox: staged.id, dryRun };
+    // `dryRun` is a query parameter in v2, not a body field — the body is a
+    // strict object and an unknown key is refused rather than ignored, which
+    // is the improvement that makes this worth getting right.
+    const body = { kind: "gps", inbox: staged.id };
     if (format) body.format = format;
-    const result = await call("POST", `/api/v1/${user}/import`, { body });
+    const result = await call("POST", `/api/v2/${user}/import${dryRun ? "?dryRun=true" : ""}`, { body });
     if (!result.ok) {
       console.error(`  refused:\n${refusal(result)}`);
       for (const problem of result.body?.problems ?? []) console.error(`      ${problem}`);
@@ -90,12 +106,17 @@ async function main() {
       );
       console.log(
         `\n  The staged export is still in the inbox, and it is the unthinned whole of it.\n` +
-          `  Offer to remove it:  DELETE ${SITE}/api/v1/${user}/inbox/${staged.id}`,
+          `  Offer to remove it:  DELETE ${SITE}/api/v2/${user}/inbox/${staged.id}`,
       );
     }
   }
 
   if (wantsTrack) {
+    // **Still v1, and deliberately.** `POST /api/v1/{user}/trips/{trip}/track`
+    // is one of the three v1 routes the migration kept: it has no v2 door
+    // because it is not a document — it derives a clipped, public line from a
+    // position history no route may ever return. `lib/api/openapi.ts` in the
+    // fernscout repo says so beside the route itself.
     const result = await call("POST", `/api/v1/${user}/trips/${trip}/track`);
     if (!result.ok) die(`\n${trip}: refused\n${refusal(result)}`);
     const t = result.body;

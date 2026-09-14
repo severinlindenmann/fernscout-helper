@@ -13,7 +13,6 @@ import { join } from "node:path";
 import {
   contentHash, deletionRefusal, inSync, localManifest, plan, readBase, writeBase,
 } from "../shared/syncManifest.mjs";
-import { JOURNAL_NO_UPDATE_DOOR, JOURNAL_UPDATE_DOORS } from "../shared/journalFields.mjs";
 
 let failures = 0;
 const test = (what, fn) => {
@@ -37,22 +36,28 @@ test("gps/ is out, in any spelling", () => {
   assert.equal(inSync("gps/exclude.json"), false);
 });
 
-test("originals/ and track.json are out, shouted or not", () => {
-  // Both learned from the server's own security pass: on a case-insensitive
-  // filesystem `ORIGINALS/01.jpg` resolves to the real folder, so a
-  // case-sensitive rule excludes it from the listing and offers it anyway.
-  assert.equal(inSync("trips/alps/originals/01.jpg"), false);
-  assert.equal(inSync("trips/alps/ORIGINALS/01.jpg"), false);
+test("track.json is out, shouted or not", () => {
+  // Learned from the server's own security pass: on a case-insensitive
+  // filesystem `TRACK.json` resolves to the real file, so a case-sensitive
+  // rule excludes it from the listing and then offers it anyway.
   assert.equal(inSync("trips/alps/track.json"), false);
   assert.equal(inSync("trips/alps/TRACK.json"), false);
 });
 
+test("originals/ are IN, because the instance put them in (fernscout B1719)", () => {
+  // They were out on both sides, on the reasoning that a print master is an
+  // order of magnitude larger than what the site serves and belongs in a
+  // filesystem backup — which is no reasoning at all for the owner of a
+  // hosted journal, who has no filesystem to take one from.
+  assert.equal(inSync("trips/alps/originals/2026-01-01-a-day/01.jpg"), true);
+});
+
 test("the content is in — config, trips, drafts, inbox", () => {
   assert.equal(inSync("config.json"), true);
-  assert.equal(inSync("trips/alps/trip.md"), true);
-  assert.equal(inSync("trips/alps/entries/2026-01-01-a-day.md"), true);
-  assert.equal(inSync("trips/alps/costs.md"), true);
-  assert.equal(inSync("trips/alps/media/a-day/01.jpg"), true);
+  assert.equal(inSync("trips/alps/trip.json"), true);
+  assert.equal(inSync("trips/alps/entries/2026-01-01-a-day.json"), true);
+  assert.equal(inSync("trips/alps/media/2026-01-01-a-day/8b0cb97abe6c2f8be3e008296ad737d3.jpg"), true);
+  assert.equal(inSync("trips/alps/media/2026-01-01-a-day/8b0cb97abe6c2f8be3e008296ad737d3.jpg.meta.json"), true);
   assert.equal(inSync("inbox/media/abc123.jpg"), true);
   assert.equal(inSync("inbox/media/abc123.jpg.meta.json"), true);
 });
@@ -187,14 +192,18 @@ try {
   mkdirSync(join(dir, "trips/alps/originals"), { recursive: true });
   mkdirSync(join(dir, "gps"), { recursive: true });
   writeFileSync(join(dir, "config.json"), "{}");
-  writeFileSync(join(dir, "trips/alps/entries/2026-01-01-a.md"), "---\ntitle: A\n---\n");
+  writeFileSync(join(dir, "trips/alps/entries/2026-01-01-a.json"), "{}");
   writeFileSync(join(dir, "trips/alps/track.json"), "[]");
   writeFileSync(join(dir, "trips/alps/originals/01.jpg"), "big");
   writeFileSync(join(dir, "gps/2026-06.jsonl"), "[1757000000,46.9,7.4]\n");
 
-  test("the walk carries the content and none of the three exclusions", () => {
+  test("the walk carries the content, the masters, and none of the exclusions", () => {
     const files = localManifest(dir);
-    assert.deepEqual(Object.keys(files).sort(), ["config.json", "trips/alps/entries/2026-01-01-a.md"]);
+    assert.deepEqual(Object.keys(files).sort(), [
+      "config.json",
+      "trips/alps/entries/2026-01-01-a.json",
+      "trips/alps/originals/01.jpg",
+    ]);
   });
 
   test("no coordinate reaches a manifest, by walk and not by comment", () => {
@@ -208,7 +217,7 @@ try {
     const read = readBase(dir);
     assert.equal(read.fresh, false);
     assert.equal(read.user, "u");
-    assert.equal(Object.keys(read.files).length, 2);
+    assert.equal(Object.keys(read.files).length, 3);
     writeFileSync(join(dir, ".fernscout-sync.json"), '{"files": {"a": ');
     assert.equal(readBase(dir).fresh, true, "half a file is no file, not a thrown syntax error");
   });
@@ -221,20 +230,13 @@ try {
   rmSync(dir, { recursive: true, force: true });
 }
 
-console.log("config.json — which keys have a door (B1504, B1569)");
-
-test("every field the instance accepts is in the list, and the three refusals are not", () => {
-  // The list publish.mjs sends. It fell two fields behind the instance once
-  // already (`ownerTel`, `travellers`), which is what B1569 is.
-  for (const key of ["title", "tagline", "visibility", "startLocation", "units", "locales",
-                     "defaultLocale", "displayCurrencies", "manualRates", "ownerTel", "travellers"]) {
-    assert.ok(JOURNAL_UPDATE_DOORS.includes(key), `${key} has a door and is missing from the list`);
-  }
-  for (const key of Object.keys(JOURNAL_NO_UPDATE_DOOR)) {
-    assert.ok(!JOURNAL_UPDATE_DOORS.includes(key), `${key} is refused on purpose and must never be sent`);
-  }
-  assert.deepEqual(Object.keys(JOURNAL_NO_UPDATE_DOOR).sort(), ["baseCurrency", "media", "owner"]);
-});
+// The block that used to stand here checked `journalFields.mjs` — a
+// hand-kept list of which keys of config.json have a door — against the
+// instance. Both are gone: v2 generates its contract from the schemas its
+// routes parse with, so a field that exists is in `/api/v2/openapi.json` by
+// construction and there is no second list here to fall behind it. That was
+// B1569's whole failure mode, and it is now structurally impossible rather
+// than tested for.
 
 console.log(failures ? `\n${failures} failed` : "\nall passed");
 process.exitCode = failures ? 1 : 0;

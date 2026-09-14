@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // B649 and B650 — the two facts a day's frontmatter states as certain
-// (`time:`, and the pairing of `location:` with `lat`/`lng`) can each be
+// (`time`, and the pairing of `location` with `coordinates`) can each be
 // wrong in a way `validate-content` cannot see, because both are about
 // *which* photo build.mjs trusts rather than about the shape of a file.
 //
@@ -52,7 +52,7 @@ function buildTrip(trip, user, photos) {
     { name: "b-real-photo.jpg", day: "2025-11-14", taken: "2025-11-14T14:25:00", time: "14:25", place: "Basel", fav: false, lat: 47.5, lng: 7.6 },
   ]);
   check("B649: time: comes from the first photo that has GPS, not the first file",
-    /time: "14:25"/.test(text), text);
+    /"time": "14:25"/.test(text), text);
 }
 
 // ── B649: a day of screenshots alone still gets a sensible time ────────────
@@ -61,7 +61,7 @@ function buildTrip(trip, user, photos) {
     { name: "only-screenshot.jpg", day: "2025-11-15", taken: "2025-11-15T09:00:00", time: "09:00", place: "", fav: false },
   ]);
   check("B649: a day with no GPS anywhere falls back to the first file's time rather than crashing",
-    /time: "09:00"/.test(text), text);
+    /"time": "09:00"/.test(text), text);
 }
 
 // ── B650: location: and the GPS photo's own place can name different towns ─

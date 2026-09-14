@@ -57,56 +57,38 @@ available*, and let them pick. Do not work down the list.
 
 ## What it checks
 
-**Against the instance's published schema** — every field, its type, and the
-values it accepts, fetched live and cached for a day. A key that is not a
-field is an error with a suggestion (`visibilty` → `visibility`), because a
-key nothing reads is silently dropped and the write still says it worked.
+**What the instance would accept — by asking it.** Every trip and every day is
+sent through `?dryRun=true`, which writes nothing and answers with what it
+would have accepted, or refuses with the field, what arrived, what was
+expected, and — for a section that is neither answered nor declined — the key
+that would decline it.
 
-**The file format itself** — the keys that never cross the API, and so cannot
-be in that schema: `gallery:` is the media call, `status: draft` is the publish
-call, `id:` is the folder's name.
+That is the whole of this half, and the reason it is not more than that is
+worth stating: this repository has re-derived the instance's rules twice and
+been wrong both times. `model.mjs` was a hand-kept copy of the file shape and
+fell behind. Reading `/content-model.json` replaced it, and that document then
+described v1 for a year while the instance refused what it advertised. A
+validator that asks cannot drift; a validator that knows will.
 
-**The things only a folder can answer**, which is the half no server can do:
+**The things only a folder can answer**, which is the half no server can do
+because it has never seen the disk:
 
-- every `gallery:` `src` is actually on disk, in a format the instance takes,
-  and not empty
-- `media/<slug>/` folders that belong to no day
-- the filename's date against the frontmatter's, and both against the trip
-- two files sharing a slug
-- dates inside the trip that have no day at all
-- a budget with no day-level spending anywhere under it
-- a day with `lat`/`lng` and no `weather:` — tipped as an offer to ask the
-  Open-Meteo archive what the day actually was, via `publish --weather`; a day
-  with no coordinates gets no tip, because there is nothing honest to offer it.
-  If the journal has not switched `features.weather` on in `config.json`, the
-  tip says that instead of the archive offer — asking without it is accepted
-  and does nothing
+- every `media` `src` has a file behind it
+- `media/<folder>/` and `originals/<folder>/` that no day names
+- the filename's date against the document's own — the filename IS the day's
+  address on the instance, so the two disagreeing is a real fault
+- two files claiming one slug
+- a day outside its trip's dates
+- a trip naming a figure that `figures/<id>.json` does not hold
+- a folder still in the old Markdown shape, which is an error with the
+  converter's command beside it
 
-**Drift between these tools and the instance**, in both directions. A field
-the instance accepts that this repository does not offer is a tip; a key these
-tools write that the instance does not list is a warning, because it will be
-dropped on publish and nothing will say so.
+## Online and offline
 
-**And the same question for each file's own key list** (B1518, B1569): given
-every key `content-model.json` says a `config.json`, a `trip.md` or a day may
-carry, which of them can `publish` actually send? One that neither travels nor
-has a stated reason for never travelling is warned about by name — it is the
-next `teaser`, `cover`, `ownerTel` or `travellers`, each of which was accepted
-here and silently never sent for months. `shared/doors.mjs` asks it;
-`tripFields.mjs`, `journalFields.mjs` and `dayFields.mjs` are the three
-answers.
-
-These warnings are about **this repository**, not about the journal in front of
-you — a clean journal can raise them, and the fix is always a line in one of
-those three files. They are a fallback, and a weak one: they only notice after
-the instance has already grown the field. The gate belongs where the field is
-added, which is the fernscout repository's B1577.
-
-## When the schema cannot be fetched
-
-It says so and checks the file format alone. That is a weaker check, and the
-report says which one you got — do not report a clean run as a clean bill
-when the instance's own rules were never consulted.
+`--offline` runs the disk half alone and **says so in the report**. It is a
+weaker check and it must not be reported as a clean bill of health: the
+instance's own rules were never consulted. Without the flag the run needs the
+owner's token, because a dry run is still a write route.
 
 ## Then
 
