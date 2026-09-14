@@ -35,8 +35,8 @@
 // 3. **It sends no number it made up.** The per-day ceiling and the size
 //    limits come from `/api/v2/status`; the 40 that used to be written into
 //    this file twice was right only on the day somebody typed it.
-import { readFileSync, existsSync, statSync } from "node:fs";
-import { basename } from "node:path";
+import { readFileSync, writeFileSync, existsSync, statSync, renameSync } from "node:fs";
+import { basename, join, dirname } from "node:path";
 import { call, limits, refusal, SITE } from "../shared/api.mjs";
 import { readJournal, mediaFile } from "../shared/journal.mjs";
 import { arg, die, has } from "../shared/lib.mjs";
@@ -127,7 +127,36 @@ function pendingMedia(day, remote) {
   return (day.media ?? []).filter((item) => !held.has(item.src));
 }
 
-async function uploadMedia(tripId, daySlug, item, maxBytes) {
+/**
+ * The instance renames a photograph to its own content hash, and the folder
+ * follows it — B1715.
+ *
+ * A folder built here names a file `01.jpg`; the instance stores it as
+ * `<hash>.jpg` and answers with that `src`. Leaving the local day pointing at
+ * `01.jpg` would mean the mirror disagrees with the instance about every
+ * photograph from the moment it is uploaded — the first sync would then plan
+ * to pull all of them and push all of them, which is precisely the state this
+ * whole port exists to end. So the answer is written back: the file is renamed
+ * and the day's `src` with it, in that order, and the day file on disk is
+ * rewritten once at the end of the day's uploads.
+ */
+function adoptStoredName(entry, item, storedSrc) {
+  if (!storedSrc || storedSrc === item.src) return false;
+  const from = mediaFile(journal, item.src);
+  const to = mediaFile(journal, storedSrc);
+  if (!from || !to || !existsSync(from)) return false;
+  try {
+    renameSync(from, to);
+  } catch {
+    return false;
+  }
+  const media = entry.document.media ?? [];
+  const slot = media.find((m) => m.src === item.src);
+  if (slot) slot.src = storedSrc;
+  return true;
+}
+
+async function uploadMedia(tripId, daySlug, item, maxBytes, entry) {
   const file = mediaFile(journal, item.src);
   if (!file || !existsSync(file)) {
     say(`  ✗ ${item.src} is named by the day and is not on disk`);
@@ -159,7 +188,10 @@ async function uploadMedia(tripId, daySlug, item, maxBytes) {
   }));
   const result = await call("POST", `/api/v2/${user}/media`, { body: form });
   if (!result.ok) { refuse(result, `upload ${item.src}`); return; }
-  say(`  uploaded       ${item.src}`);
+  const storedSrc = result.body?.src ?? result.body?.items?.[0]?.src;
+  const adopted = entry && adoptStoredName(entry, item, storedSrc);
+  say(`  uploaded       ${item.src}${adopted ? `  → ${storedSrc}` : ""}`);
+  return adopted;
 }
 
 // ── the journal itself ─────────────────────────────────────────────────────
@@ -229,7 +261,17 @@ for (const trip of journal.trips) {
       refused += 1;
       continue;
     }
-    for (const item of pending) await uploadMedia(trip.id, entry.slug, item, maxImageBytes);
+    let adoptedAny = false;
+    for (const item of pending) {
+      if (await uploadMedia(trip.id, entry.slug, item, maxImageBytes, entry)) adoptedAny = true;
+    }
+    // Written once, after the day's uploads rather than after each one: a run
+    // interrupted half way leaves the folder as it was, which the next run can
+    // simply do again.
+    if (adoptedAny && !dry) {
+      writeFileSync(entry.path, `${JSON.stringify(entry.document, null, 2)}\n`);
+      say(`  folder updated day ${entry.slug} now names the files as the instance stores them`);
+    }
 
     // Publishing is the separate call it has always been, and the person has
     // already said the word for this whole run (the skill's own procedure; see

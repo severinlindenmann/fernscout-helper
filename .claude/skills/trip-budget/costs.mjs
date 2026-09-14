@@ -5,25 +5,58 @@
 //   node costs.mjs check   --trip algarve-2026 --user severin
 //   node costs.mjs add     --trip … --user … --day 2026-06-22 \
 //                          --label "Flüge Basel–Faro" --amount 780 --currency CHF --category flights
-//   node costs.mjs add     --trip … --user … --before   (…same, into costs.md)
+//   node costs.mjs add     --trip … --user … --before   (…onto the trip itself)
 //   node costs.mjs budget  --trip … --user … --total 3000 --days 10 --currency CHF
-import { readFileSync, readdirSync, existsSync } from "node:fs";
+//
+// **`--before` means something specific now.** In v1 a trip's `costs.md` was
+// the trip's whole spend and days carried their own besides, so the two could
+// and did hold the same money twice — one real folder's `costs.md` was
+// line-for-line what its days already said, and publishing both reported the
+// trip at double. In v2 a trip's `costs.items` is **preparation only**: what
+// was paid before leaving. Everything spent on the trip belongs to the day it
+// was spent on. So `--before` is the flights and the deposit, and everything
+// else wants a `--day`.
+import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { ROOT, arg, has, die, argv } from "../shared/lib.mjs";
-import { CATEGORIES, MARK, costLine, readCostLines, writeCostLines, readCostsMd, writeCostsMd } from "../shared/costfile.mjs";
+
+/** The instance's own list, and the enum a cost is refused for missing. Read
+ * from the contract where a run is online; this is the fallback for a run that
+ * is not, and it is the one list in this file. */
+const CATEGORIES = ["preparation", "flights", "accommodation", "food", "transport", "activities", "other"];
 
 const verb = argv[0];
 const trip = arg("trip") ?? die("--trip <name> is required.");
 const user = arg("user") ?? die("--user <name> is required.");
-const TRIP = join(ROOT, "content", user, "trips", trip);
+const CONTENT = process.env.FERNSCOUT_CONTENT_DIR ?? join(ROOT, "content");
+const TRIP = join(CONTENT, user, "trips", trip);
 if (!existsSync(TRIP)) die(`No trip folder at ${TRIP}.`);
 
+const read = (path) => JSON.parse(readFileSync(path, "utf8"));
+const write = (path, doc) => writeFileSync(path, `${JSON.stringify(doc, null, 2)}\n`);
+
+const tripFile = join(TRIP, "trip.json");
+if (!existsSync(tripFile)) {
+  die(
+    `No trip.json at ${TRIP}.` +
+    (existsSync(join(TRIP, "trip.md"))
+      ? "\nThis folder is the old Markdown shape. Convert it first:\n" +
+        `  node .claude/skills/shared/convert.mjs ${user}`
+      : ""),
+  );
+}
+
 const entryFiles = existsSync(join(TRIP, "entries"))
-  ? readdirSync(join(TRIP, "entries")).filter((f) => f.endsWith(".md")).sort() : [];
-const entryFor = (day) => {
-  const same = entryFiles.filter((f) => f.startsWith(day));
+  ? readdirSync(join(TRIP, "entries")).filter((f) => f.endsWith(".json")).sort()
+  : [];
+
+/** The day file for one date. More than one day can share a date — several
+ * updates in one day is ordinary — so the earliest by `time` wins, and a day
+ * with no time sorts first, which is where an untimed note belongs. */
+const entryFor = (date) => {
+  const same = entryFiles.filter((f) => f.startsWith(date));
   return same.sort((a, b) => {
-    const t = (f) => readFileSync(join(TRIP, "entries", f), "utf8").match(/^time: "(.*)"/m)?.[1] ?? "";
+    const t = (f) => read(join(TRIP, "entries", f)).time ?? "";
     return t(a).localeCompare(t(b));
   })[0];
 };
@@ -35,29 +68,42 @@ if (verb === "add") {
   const category = arg("category") ?? "other";
   if (!CATEGORIES.includes(category)) die(`--category must be one of: ${CATEGORIES.join(", ")}`);
   const currency = arg("currency");
-  const cost = { label, amount, currency, category };
+  const cost = { label, amount, ...(currency ? { currency } : {}), category };
 
-  if (has("before")) {                       // paid before leaving → costs.md
-    const { own, bank } = readCostsMd(TRIP);
-    writeCostsMd(TRIP, { lines: [...own, ...bank, costLine(cost)] });
-    console.log(`Added to costs.md: ${label}, ${amount} ${currency ?? ""} (${category})`);
+  if (has("before")) {
+    const doc = read(tripFile);
+    doc.costs = { ...(doc.costs ?? {}), items: [...(doc.costs?.items ?? []), cost] };
+    // A trip that had declined costs has just answered them; leaving the
+    // decline beside the answer is a document saying both at once, which the
+    // instance refuses and is right to.
+    if (doc.declined?.costs) delete doc.declined.costs;
+    if (doc.declined && !Object.keys(doc.declined).length) delete doc.declined;
+    write(tripFile, doc);
+    console.log(`Added to the trip's preparation costs: ${label}, ${amount} ${currency ?? ""} (${category})`);
   } else {
-    const day = arg("day") ?? die("--day YYYY-MM-DD, or --before for something paid before the trip.");
-    const file = entryFor(day) ?? die(`No entry for ${day}. Add the day first, or use --before.`);
+    const date = arg("day") ?? die("--day YYYY-MM-DD, or --before for something paid before the trip.");
+    const file = entryFor(date) ?? die(`No day for ${date}. Write the day first, or use --before.`);
     const path = join(TRIP, "entries", file);
-    const { own, bank } = readCostLines(readFileSync(path, "utf8"));
-    writeCostLines(path, [...own, costLine(cost), ...bank]);
+    const doc = read(path);
+    doc.costs = [...(doc.costs ?? []), cost];
+    if (doc.declined?.costs) delete doc.declined.costs;
+    if (doc.declined && !Object.keys(doc.declined).length) delete doc.declined;
+    write(path, doc);
     console.log(`Added to ${file}: ${label}, ${amount} ${currency ?? ""} (${category})`);
   }
   process.exit(0);
 }
 
 if (verb === "budget") {
-  const total = Number(arg("total")), days = Number(arg("days"));
+  const total = Number(arg("total"));
+  const days = Number(arg("days"));
   const currency = arg("currency") ?? "CHF";
   if (!Number.isFinite(total) || !Number.isFinite(days)) die("--total and --days must be numbers.");
-  const { own, bank } = readCostsMd(TRIP);
-  writeCostsMd(TRIP, { budget: { total, days, currency }, lines: [...own, ...bank] });
+  const doc = read(tripFile);
+  doc.costs = { ...(doc.costs ?? {}), budget: { total, days, currency } };
+  if (doc.declined?.costs) delete doc.declined.costs;
+  if (doc.declined && !Object.keys(doc.declined).length) delete doc.declined;
+  write(tripFile, doc);
   console.log(`Budget: ${total} ${currency} over ${days} days.`);
   process.exit(0);
 }
@@ -66,42 +112,54 @@ if (verb !== "check") die("Say: check, add, or budget.");
 
 // check — what is recorded, and what is conspicuously absent. It asks the
 // questions; it never answers them.
-const parse = (line) => ({
-  amount: Number(line.match(/amount: ([\d.]+)/)?.[1] ?? 0),
-  currency: line.match(/currency: "(\w{3})"/)?.[1] ?? null,
-  category: line.match(/category: "(\w+)"/)?.[1] ?? "other",
-  label: line.match(/label: "(.*?)"/)?.[1] ?? "",
-  bank: line.includes(MARK),
-});
-
-const md = readCostsMd(TRIP);
-const before = [...md.own, ...md.bank].map(parse);
+const tripDoc = read(tripFile);
+const before = tripDoc.costs?.items ?? [];
 const days = {};
-for (const f of entryFiles) {
-  const text = readFileSync(join(TRIP, "entries", f), "utf8");
-  const day = text.match(/^date: "(.*)"/m)?.[1] ?? f.slice(0, 10);
-  const { own, bank } = readCostLines(text);
-  (days[day] ??= []).push(...[...own, ...bank].map(parse));
+for (const file of entryFiles) {
+  const doc = read(join(TRIP, "entries", file));
+  const date = doc.date ?? file.slice(0, 10);
+  (days[date] ??= []).push(...(doc.costs ?? []));
 }
 
 const all = [...before, ...Object.values(days).flat()];
-const seen = new Set(all.map((c) => c.category));
-console.log(`${trip}: ${entryFiles.length} entries, ${all.length} costs recorded ` +
-  `(${all.filter((c) => c.bank).length} from a statement, ${all.filter((c) => !c.bank).length} by hand).`);
+console.log(
+  `${trip}: ${entryFiles.length} day${entryFiles.length === 1 ? "" : "s"}, ${all.length} cost${all.length === 1 ? "" : "s"} recorded ` +
+  `(${before.length} before leaving, ${all.length - before.length} on the days themselves).`,
+);
 
-const budget = md.text?.match(/^budget:\n(?:  \w+: .*\n)+/m)?.[0];
-console.log(budget ? `\n${budget.trim()}` : `\nNo budget set. Ask what the trip was meant to cost, then: costs.mjs budget …`);
+const budget = tripDoc.costs?.budget;
+console.log(
+  budget
+    ? `\nBudget: ${budget.total} ${budget.currency ?? ""}${budget.days ? ` over ${budget.days} days` : ""}`
+    : "\nNo budget set. Ask what the trip was meant to cost, then: costs.mjs budget …",
+);
 
-console.log(`\nRecorded, by category:`);
+console.log("\nRecorded, by category:");
 for (const c of CATEGORIES) {
-  const list = all.filter((x) => x.category === c);
-  console.log(`  ${c.padEnd(14)} ${list.length ? String(list.length).padStart(3) + " item(s)" : "  — nothing"}`);
+  const list = all.filter((x) => (x.category ?? "other") === c);
+  console.log(`  ${c.padEnd(14)} ${list.length ? `${String(list.length).padStart(3)} item(s)` : "  — nothing"}`);
 }
 
-console.log(`\nDays with nothing recorded:`);
-const empty = Object.entries(days).filter(([, list]) => !list.length).map(([d]) => d);
-console.log(empty.length ? "  " + empty.join(", ") : "  none");
+console.log("\nDays with nothing recorded:");
+const declinedDays = [];
+for (const file of entryFiles) {
+  const doc = read(join(TRIP, "entries", file));
+  const date = doc.date ?? file.slice(0, 10);
+  if (doc.declined?.costs) declinedDays.push(date);
+}
+const empty = Object.entries(days)
+  .filter(([date, list]) => !list.length && !declinedDays.includes(date))
+  .map(([date]) => date);
+console.log(empty.length ? `  ${empty.join(", ")}` : "  none");
+if (declinedDays.length) {
+  console.log(`\n${declinedDays.length} day(s) say in the document why they have no costs — those are answered, not missing.`);
+}
 
+const seen = new Set(all.map((c) => c.category ?? "other"));
 const missing = ["flights", "accommodation", "transport"].filter((c) => !seen.has(c));
-if (missing.length) console.log(`\nNothing at all under: ${missing.join(", ")}. ` +
-  `Worth asking about — these are usually the biggest lines and almost never on a card statement in full.`);
+if (missing.length) {
+  console.log(
+    `\nNothing at all under: ${missing.join(", ")}. Worth asking about — these are usually the ` +
+    "biggest lines and almost never on a card statement in full.",
+  );
+}

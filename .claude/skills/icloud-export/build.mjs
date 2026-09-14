@@ -61,7 +61,12 @@ for (const [day, list] of Object.entries(byDay).sort()) {
   let daySlug = base, n = 1;
   while (usedSlugs.has(daySlug)) daySlug = `${base}-${++n}`;
   usedSlugs.add(daySlug);
-  const mediaDir = join(TRIP, "media", daySlug);
+  // The folder is named by the day's WHOLE slug — `2026-08-26-phuket-island`
+  // — because that is what the instance calls it, and this folder is a mirror
+  // of the instance since B1715. v1 filed them under the bare slug and the two
+  // sides then disagreed about every path.
+  const fullSlug = `${day}-${daySlug}`;
+  const mediaDir = join(TRIP, "media", fullSlug);
   mkdirSync(mediaDir, { recursive: true });
 
   const gallery = list.map((p, i) => {
@@ -74,7 +79,7 @@ for (const [day, list] of Object.entries(byDay).sort()) {
     const dim = execFileSync("sips", ["-g", "pixelWidth", "-g", "pixelHeight", dest], { encoding: "utf8" });
     const [w, h] = [/pixelWidth: (\d+)/, /pixelHeight: (\d+)/].map((re) => Number(dim.match(re)?.[1] ?? 0));
     copied++;
-    return { src: `/media/${trip}/${daySlug}/${name}`, w, h, caption: p.note,
+    return { src: `/media/${trip}/${fullSlug}/${name}`, w, h, caption: p.note,
              visibility: review.photos?.[p.file]?.visibility || "" };
   });
 
@@ -106,34 +111,60 @@ for (const [day, list] of Object.entries(byDay).sort()) {
   if (gpsPlace && place && gpsPlace !== place) {
     console.log(`  ⚠ ${day}: location: "${place}" but the coordinates come from a photo placed in "${gpsPlace}"`);
   }
-  const lines = [
-    "---",
-    `title: ""                     # the agent writes this`,
-    `date: "${day}"`,
-    `time: "${first.time}"`,
-    place ? `location: "${place}"` : `location: ""`,
+  // The day, as the document the instance stores — B1715. `title` and
+  // `content` are deliberately empty: they are the two things only the person
+  // can supply, and a build that filled them with something plausible would be
+  // the one thing this repository never does.
+  //
+  // Everything this cannot know is DECLINED rather than omitted, because v2
+  // asks about every optional section and an omission is a refusal
+  // (`422 incomplete`) rather than a blank. Each sentence below says what is
+  // actually true of a day built from photographs — not a reason invented to
+  // get past the check.
+  const declined = {
+    costs: "no spending was recorded while these photographs were taken",
+    time: "the time of day was not recorded beyond the photographs' own",
+    timezone: "no timezone was established for this day",
+    transportMode: "no transport leg was recorded for this day",
+    tags: "no tags were applied to this day",
+    translations: "no translation was written for this day",
+    visibility: "this day is as open as the trip it belongs to",
+    weather: "no weather reading was taken; ask the server for one by sending weather: true",
+  };
+  if (!place) declined.location = "no place name came with these photographs";
+  if (!country) declined.country = "no country came with these photographs";
+  declined.countryCode = "no country code is written here — a wrong flag is worse than no flag";
+  if (!withGps) declined.coordinates = "none of these photographs carried a position";
+  if (!gallery.length) declined.media = "no photographs were kept for this day";
+
+  const document = {
+    title: "",
+    date: day,
+    content: "",
+    time: first.time,
+    ...(place ? { location: place } : {}),
     // The name as Photos gives it, which is the Mac's own language — the
-    // journal may be written in another one. No `countryCode:`: mapping a
-    // name to ISO 3166 is a table this repository would have to keep, and a
-    // wrong flag is worse than no flag. The instance takes one without the
-    // other.
-    ...(country ? [`country: ${JSON.stringify(country)}`] : []),
-    ...(withGps ? [`lat: ${withGps.lat}`, `lng: ${withGps.lng}`] : []),
-    "gallery:",
-    ...gallery.flatMap((g) => [
-      `  - src: "${g.src}"`,
-      ...(g.caption ? [`    caption: ${JSON.stringify(g.caption)}`] : []),
-      // Only ever written for a picture the person held back on the review
-      // page. An absent line is what "everyone the trip lets in" looks like,
-      // and the label can only narrow that — never widen it.
-      ...(g.visibility ? [`    visibility: ${JSON.stringify(g.visibility)}`] : []),
-      `    type: "image"`, `    width: ${g.w}`, `    height: ${g.h}`,
-    ]),
-    "status: draft",
-    "---", "",
-    "_The agent writes the day here, from notes.md._", "",
-  ];
-  writeFileSync(join(TRIP, "entries", `${day}-${daySlug}.md`), lines.join("\n"));
+    // journal may be written in another one. No `countryCode`: mapping a name
+    // to ISO 3166 is a table this repository would have to keep, and a wrong
+    // flag is worse than no flag.
+    ...(country ? { country } : {}),
+    ...(withGps ? { coordinates: { lat: withGps.lat, lng: withGps.lng } } : {}),
+    ...(gallery.length
+      ? {
+          media: gallery.map((g) => ({
+            src: g.src,
+            ...(g.caption ? { caption: g.caption } : {}),
+            // Only ever written for a picture the person held back on the
+            // review page. An absent value is what "everyone the trip lets in"
+            // looks like, and the label can only narrow that — never widen it.
+            ...(g.visibility ? { visibility: g.visibility } : {}),
+          })),
+        }
+      : {}),
+    declined,
+    status: "draft",
+  };
+  writeFileSync(join(TRIP, "entries", `${fullSlug}.json`), `${JSON.stringify(document, null, 2)}\n`);
   written++;
 
   notes.push(`## ${day} — ${place || "no place"}  (${list.length} photos)`);
@@ -152,4 +183,5 @@ for (const [day, list] of Object.entries(byDay).sort()) {
 writeFileSync(join(DIR, "notes.md"), notes.join("\n"));
 console.log(`${written} entries, ${copied} photos → content/${user}/trips/${trip}/`);
 console.log(`The author's words → export/${trip}/notes.md`);
-console.log(`Every entry is a draft, and every title and every paragraph is still empty.`);
+console.log("Every day is a draft, and every title and every paragraph is still empty.");
+console.log("Each one declines what a photograph cannot say — read those sentences before publishing.");
