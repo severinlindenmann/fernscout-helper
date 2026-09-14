@@ -99,6 +99,61 @@ check(
   existsSync(join(HERE, "fixtures/perfekt/trips/alpine-loop/trip.md")),
 );
 
+// ── B-7, the one that loses money silently ────────────────────────────────
+//
+// Built here rather than taken from a fixture because the shape is specific
+// and it is worth stating exactly: v1's costs.md held a trip's WHOLE spend and
+// its days held their own besides, and a statement import wrote the trip's
+// copy with the date in the label. Measured on a real journal: 27 items each
+// side, both summing to 923.60, published as 1847.20 against a 1000 budget.
+{
+  const { mkdirSync, writeFileSync } = await import("node:fs");
+  const v1 = join(tmpdir(), `fernscout-convert-costs-${process.pid}`);
+  const out = join(tmpdir(), `fernscout-convert-costs-out-${process.pid}`);
+  rmSync(v1, { recursive: true, force: true });
+  rmSync(out, { recursive: true, force: true });
+  mkdirSync(join(v1, "doppelt", "trips", "budapest", "entries"), { recursive: true });
+  writeFileSync(join(v1, "doppelt", "config.json"), JSON.stringify({ title: "Doppelt" }));
+  writeFileSync(join(v1, "doppelt", "trips", "budapest", "trip.md"),
+    '---\nid: budapest\ntitle: Budapest\nstart: 2026-07-13\nend: 2026-07-14\n---\nEin paar Tage.\n');
+  writeFileSync(join(v1, "doppelt", "trips", "budapest", "costs.md"),
+    '---\nbudget: { total: 1000, days: 2, currency: "CHF" }\ncosts:\n' +
+    '  - { label: "BudapestGO (2026-07-13)", amount: 7.2, category: "transport", currency: "CHF" }\n' +
+    '  - { label: "Tesco (2026-07-14)", amount: 38.67, category: "food", currency: "CHF" }\n' +
+    '  - { label: "easyJet", amount: 177.14, category: "flights", currency: "CHF" }\n---\n');
+  writeFileSync(join(v1, "doppelt", "trips", "budapest", "entries", "2026-07-13-erster-tag.md"),
+    '---\ntitle: Erster Tag\ndate: 2026-07-13\ncosts:\n' +
+    '  - { label: "BudapestGO", amount: 7.2, category: "transport", currency: "CHF" }\n---\nAngekommen.\n');
+  writeFileSync(join(v1, "doppelt", "trips", "budapest", "entries", "2026-07-14-zweiter-tag.md"),
+    '---\ntitle: Zweiter Tag\ndate: 2026-07-14\ncosts:\n' +
+    '  - { label: "Tesco", amount: 38.67, category: "food", currency: "CHF" }\n---\nEingekauft.\n');
+
+  const run = convertJournal("doppelt", { from: v1, into: out });
+  const trip = JSON.parse(readFileSync(join(out, "trips/budapest/trip.json"), "utf8"));
+  const dayTotal = ["2026-07-13-erster-tag", "2026-07-14-zweiter-tag"]
+    .map((slug) => JSON.parse(readFileSync(join(out, `trips/budapest/entries/${slug}.json`), "utf8")))
+    .flatMap((d) => d.costs ?? [])
+    .reduce((n, c) => n + c.amount, 0);
+  const tripTotal = (trip.costs?.items ?? []).reduce((n, c) => n + c.amount, 0);
+
+  check(
+    "an item the days already carry is dropped from the trip, date suffix and all",
+    (trip.costs?.items ?? []).every((c) => !/BudapestGO|Tesco/.test(c.label)),
+    JSON.stringify(trip.costs?.items),
+  );
+  check("the one that appears on no day is kept as preparation",
+    tripTotal === 177.14, String(tripTotal));
+  check("the days keep every item they had", Math.abs(dayTotal - 45.87) < 0.001, String(dayTotal));
+  check("so the trip totals the money that was actually spent, once",
+    Math.abs(tripTotal + dayTotal - 223.01) < 0.001, String(tripTotal + dayTotal));
+  check("the budget survives", trip.costs?.budget?.total === 1000, JSON.stringify(trip.costs?.budget));
+  check("and the run says out loud what it dropped",
+    run.warnings.some((w) => /same money the days already carry/.test(w)), run.warnings.join(" | "));
+
+  rmSync(v1, { recursive: true, force: true });
+  rmSync(out, { recursive: true, force: true });
+}
+
 rmSync(target, { recursive: true, force: true });
 console.log(failed === 0 ? "\nall good" : `\n${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

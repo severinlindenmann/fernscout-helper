@@ -2,7 +2,7 @@
 // A folder written by the old tools, converted once into the shape the
 // instance actually stores — B1715.
 //
-//   node .claude/skills/shared/convert.mjs <user> [--into <dir>] [--force]
+//   node .claude/skills/shared/convert.mjs <user> [--from <dir>] [--into <dir>] [--force]
 //
 // v1's folder was Markdown with frontmatter and three files per trip; v2's is
 // JSON, one document per trip, and every optional section either answered or
@@ -206,11 +206,45 @@ function moveMedia({ src, sourceTripDir, targetTripDir, tripId, bareSlug, daySlu
 
 /** The whole spend a trip's days carry, for the comparison in `convertTrip`. */
 function daySpend(days) {
-  return days.flatMap((d) => (Array.isArray(d.costs) ? d.costs : []));
+  return days.flatMap((d) => (Array.isArray(d.costs) ? d.costs : []).map((c) => ({ ...c, date: d.date })));
 }
 
 function sum(items) {
   return items.reduce((n, item) => n + (Number(item.amount) || 0), 0);
+}
+
+/**
+ * The same money, written twice — and how to recognise it.
+ *
+ * v1's `costs.md` held a trip's whole spend, and its days held their own
+ * besides. When a statement import wrote both, the trip's copy carries the
+ * date in its label — `"BudapestGO (2026-07-13)"` — where the day carries the
+ * bare name on the day of that date. So a naive `label === label` finds
+ * nothing and reports a folder as clean: measured on a real journal, it found
+ * 0 of 27 duplicates while the two sides summed to exactly the same 923.60.
+ *
+ * Matched on the three things that are actually the same: the label with that
+ * date suffix taken off, the amount to the cent, and — when the label names a
+ * date — the day it names.
+ */
+const LABEL_DATE = /\s*\((\d{4}-\d{2}-\d{2})\)\s*$/;
+
+function costKey(item, date) {
+  const label = String(item.label ?? "").replace(LABEL_DATE, "").trim().toLowerCase();
+  return `${label}|${(Number(item.amount) || 0).toFixed(2)}|${date ?? ""}`;
+}
+
+/** Which of a trip's items the days already carry. */
+function alreadyOnADay(items, onDays) {
+  const index = new Set();
+  for (const c of onDays) {
+    index.add(costKey(c, c.date));
+    index.add(costKey(c, null));
+  }
+  return items.filter((item) => {
+    const named = LABEL_DATE.exec(String(item.label ?? ""))?.[1] ?? null;
+    return index.has(costKey(item, named)) || index.has(costKey(item, null));
+  });
 }
 
 function convertTrip(dir, id, days) {
@@ -257,24 +291,41 @@ function convertTrip(dir, id, days) {
     if (Array.isArray(costsData.costs) && costsData.costs.length) costs.items = costsData.costs;
     if (Object.keys(costs).length) trip.costs = costs;
 
-    // B-7, and the reason this is a report rather than a rule. In v2 a trip's
-    // items are what was spent BEFORE leaving; everything spent on the trip
-    // belongs to its days. Both shapes exist in real folders written by these
-    // tools, so the only honest thing to do is measure and say.
+    // B-7 — the one that loses money silently, and the reason this is
+    // measured rather than assumed.
+    //
+    // In v2 a trip's `costs.items` is PREPARATION — what was paid before
+    // leaving — and everything spent on the trip belongs to the day it was
+    // spent on. v1 had no such split: one real folder's `costs.md` was
+    // line-for-line the same 27 items its own days already carried, both
+    // sides summing to exactly CHF 923.60 against a CHF 1000 budget, and
+    // writing both publishes the trip at 1847.20 with no error anywhere.
+    //
+    // So an item the days already carry is **dropped from the trip**, and the
+    // run says so. Nothing is lost by that: it is the same money, still on the
+    // day it was spent, and the day is where v2 keeps it. What is kept is
+    // every item that appears on no day — the flights, the hotels, the hire
+    // car — which is exactly what preparation means.
     const onDays = daySpend(days);
     const items = costs.items ?? [];
-    if (items.length && onDays.length) {
-      const same = items.length === onDays.length && Math.abs(sum(items) - sum(onDays)) < 0.01;
-      if (same) {
-        warn(
-          `${id}: costs.md holds ${items.length} items totalling ${sum(items).toFixed(2)}, and the days hold ` +
-          `${onDays.length} totalling ${sum(onDays).toFixed(2)} — these look like the same spend written twice. ` +
-          `In v2 a trip's items are PREPARATION only, so sending both reports the trip at double. ` +
-          `Decide which is true for this trip and delete the other; nothing here guesses.`,
-        );
-      } else {
-        note(`${id}: trip items ${sum(items).toFixed(2)}, day items ${sum(onDays).toFixed(2)} — read as preparation plus on-trip spend, which is the ordinary shape`);
-      }
+    const duplicated = alreadyOnADay(items, onDays);
+    if (duplicated.length) {
+      const kept = items.filter((item) => !duplicated.includes(item));
+      if (kept.length) costs.items = kept;
+      else delete costs.items;
+      trip.costs = Object.keys(costs).length ? costs : undefined;
+      if (!trip.costs) delete trip.costs;
+      warn(
+        `${id}: ${duplicated.length} of ${items.length} items in costs.md are the same money the days ` +
+        `already carry (${sum(duplicated).toFixed(2)}) — dropped from the trip, which in v2 holds ` +
+        `preparation only. The days keep every one of them, so the trip now totals ` +
+        `${(sum(kept) + sum(onDays)).toFixed(2)} rather than ${(sum(items) + sum(onDays)).toFixed(2)}. ` +
+        (kept.length
+          ? `${kept.length} item(s) appear on no day and were kept as preparation.`
+          : `Nothing was left on the trip but its budget.`),
+      );
+    } else if (items.length && onDays.length) {
+      note(`${id}: trip items ${sum(items).toFixed(2)}, day items ${sum(onDays).toFixed(2)}, none of them the same line twice — preparation plus on-trip spend, which is the ordinary shape`);
     }
   }
 
@@ -321,8 +372,12 @@ function copyMedia(from, toDir, storedName) {
   return to;
 }
 
-export function convertJournal(user, { into, force = false } = {}) {
-  const source = join(CONTENT, user);
+export function convertJournal(user, { into, from, force = false } = {}) {
+  // `from` is for a caller that knows where the folder is — a test, or a run
+  // pointed at somebody's Desktop. `CONTENT` is read once at import, so an
+  // env var set after the first import would be ignored and the argument is
+  // what makes that impossible to get wrong.
+  const source = join(from ?? CONTENT, user);
   const target = into ?? `${source}-v2`;
   if (!existsSync(source)) throw new Error(`No such journal: ${source}`);
   if (existsSync(target) && !force) throw new Error(`${target} already exists — pass --force to write into it anyway`);
@@ -412,10 +467,10 @@ function stripSlug(day) {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const user = argv.find((a) => !a.startsWith("--") && argv[argv.indexOf(a) - 1] !== "--into");
   if (!user) {
-    console.error("usage: node .claude/skills/shared/convert.mjs <user> [--into <dir>] [--force]");
+    console.error("usage: node .claude/skills/shared/convert.mjs <user> [--from <dir>] [--into <dir>] [--force]");
     process.exit(2);
   }
-  const result = convertJournal(user, { into: arg("into"), force: has("force") });
+  const result = convertJournal(user, { into: arg("into"), from: arg("from"), force: has("force") });
   console.log(`${result.source}\n  → ${result.target}`);
   console.log(`  ${result.trips} trip(s), ${result.figures} figure(s)\n`);
   for (const line of result.notes) console.log(`  note     ${line}`);
