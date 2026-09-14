@@ -876,7 +876,9 @@ for (const trip of journal.trips) {
         }
       }
     }
-    const pending = local.filter(({ file }) => !remoteByBasename.has(basename(file)));
+    const pending = gallery.length >= 40
+      ? (local.length > gallery.length && note(`  note: ${local.length - gallery.length} local photos remain; ${slug} already has the server maximum of 40`), [])
+      : local.filter(({ file }) => !remoteByBasename.has(basename(file)));
 
     if (pending.length) {
       // The instance's own whole-request ceiling, from /api/health, with a
@@ -887,7 +889,7 @@ for (const trip of journal.trips) {
       const batches = [];
       for (const one of pending) {
         const bytes = statSync(one.file).size;
-        if (batch.length && size + bytes > LIMIT) { batches.push(batch); batch = []; size = 0; }
+        if (batch.length >= 40 || (batch.length && size + bytes > LIMIT)) { batches.push(batch); batch = []; size = 0; }
         batch.push(one); size += bytes;
       }
       if (batch.length) batches.push(batch);
