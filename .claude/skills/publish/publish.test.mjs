@@ -57,7 +57,17 @@ function write(path, value) {
   writeFileSync(full, typeof value === "string" || Buffer.isBuffer(value) ? value : `${JSON.stringify(value, null, 2)}\n`);
 }
 
-write("config.json", { title: "Ana" });
+write("config.json", {
+  title: "Ana",
+  tagline: "Unterwegs",
+  owner: { name: "Ana B", nickname: "Ana", email: "ana@example.test",
+           // On disk and never writable — the proven telephone number and its
+           // proof. Publishing must drop these rather than send them: the
+           // API's owner sub-schema is {name, nickname, email} with
+           // additionalProperties: false, and proving a number is a round trip
+           // a file cannot perform.
+           tel: "41760000000", telProvenAt: "2026-09-14T08:00:00.000Z", telProvenMethod: "whatsapp-inbound" },
+});
 write(`trips/${TRIP}/trip.json`, {
   id: TRIP,
   title: "Alps",
@@ -77,6 +87,7 @@ write(`trips/${TRIP}/media/${DAY}/${HASH}.jpg`, PHOTO);
 
 // ── the fake instance ─────────────────────────────────────────────────────
 const seen = [];
+let journalDoc = { username: USER, title: "Ana", owner: { name: "Ana B", nickname: "Ana", email: "ana@example.test" } };
 let dayDoc = null;
 let tripDoc = null;
 let incomplete = false;
@@ -102,7 +113,38 @@ const server = createServer(async (req, res) => {
   if (path === "/api/v2/status") {
     return json(200, { capabilities: {}, limits: { itemsPerDay: 40, imageMaxBytes: 1000000 }, media: {} });
   }
-  if (path === `/api/v2/${USER}`) return json(200, { username: USER });
+  if (path === "/api/v2/openapi.json") {
+    return json(200, {
+      openapi: "3.1.0",
+      info: { version: 2 },
+      paths: {
+        "/api/v2/{user}": {
+          patch: {
+            requestBody: {
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      title: {}, tagline: {}, visibility: {}, locales: {}, units: {},
+                      baseCurrency: {}, displayCurrencies: {}, figures: {}, owner: {}, declined: {},
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+  if (path === `/api/v2/${USER}`) {
+    if (req.method === "PATCH") {
+      journalDoc = { ...journalDoc, ...JSON.parse(String(await body(req))) };
+      return json(200, journalDoc, '"journal-1"');
+    }
+    return json(200, journalDoc, '"journal-1"');
+  }
 
   const tripPath = `/api/v2/${USER}/trips/${TRIP}`;
   if (path === tripPath) {
@@ -191,6 +233,24 @@ async function run(args = []) {
   check("the day is on the site afterwards", dayDoc?.status === "published", JSON.stringify(dayDoc));
 }
 
+// ── the journal document itself is sent, and the tel is not ──────────────
+//
+// It had no door at all: config.json is in the sync manifest, so a sync
+// planned a push for it, said "↑ config.json — changed locally", ran publish —
+// which had no mention of `config` anywhere — and then recorded that both
+// sides agreed. An owner renaming their journal lost the rename silently and
+// permanently, since a later pull saw nothing to bring back either.
+{
+  check("the journal was corrected", journalDoc.tagline === "Unterwegs", JSON.stringify(journalDoc));
+  check("the writable fields came from the contract", seen.includes(`PATCH /api/v2/${USER}`), seen.join(", "));
+  check(
+    "the proven telephone number was NOT sent — it lives on disk and has no door",
+    journalDoc.owner?.tel === undefined && journalDoc.owner?.telProvenAt === undefined,
+    JSON.stringify(journalDoc.owner),
+  );
+  check("what the API does take of the owner block did go", journalDoc.owner?.email === "ana@example.test", JSON.stringify(journalDoc.owner));
+}
+
 // ── running it again corrects rather than creates, and re-sends nothing ───
 {
   seen.length = 0;
@@ -203,6 +263,7 @@ async function run(args = []) {
   );
   check("the day is corrected, not re-created", seen.includes(`PATCH /api/v2/${USER}/trips/${TRIP}/days/${DAY}`), seen.join(", "));
   check("the photograph the instance already holds is not sent again", !seen.includes(`POST /api/v2/${USER}/media`), seen.join(", "));
+  check("the journal, already in step, is not patched again", !seen.includes(`PATCH /api/v2/${USER}`), seen.join(", "));
   check("a day already on the site is not published twice", !seen.some((s) => s.endsWith("/publish")), seen.join(", "));
 }
 

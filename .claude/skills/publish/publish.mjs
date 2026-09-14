@@ -37,7 +37,7 @@
 //    this file twice was right only on the day somebody typed it.
 import { readFileSync, writeFileSync, existsSync, statSync, renameSync } from "node:fs";
 import { basename, join, dirname } from "node:path";
-import { call, limits, refusal, SITE } from "../shared/api.mjs";
+import { call, limits, openapi, refusal, requestSchema, SITE } from "../shared/api.mjs";
 import { readJournal, mediaFile } from "../shared/journal.mjs";
 import { arg, die, has } from "../shared/lib.mjs";
 
@@ -210,6 +210,85 @@ if (!existingJournal) {
     "POST /api/v2/journals spends a signup token, which is a person's decision and an " +
     "email address they own. Make it first, then run this again.",
   );
+}
+
+/**
+ * The journal document itself — `config.json`.
+ *
+ * **This had no door at all until somebody looked.** `config.json` is in the
+ * sync manifest, so a `sync up` planned a push for it, reported `↑
+ * config.json — changed locally`, ran this script, and this script had no
+ * mention of `config` anywhere in it. The file was never sent, the run exited
+ * 0 saying "Done.", and the sync state was then written recording that both
+ * sides agreed — so a later `sync down` saw nothing to pull either. An owner
+ * renaming their journal lost the rename permanently and silently, and
+ * `title`, `tagline`, `locales`, `visibility`, `baseCurrency`, `units` and
+ * `figures` all go the same way.
+ *
+ * **The writable set is read from the contract, never listed here.** That is
+ * the whole lesson of B1569 and B1518: a hand-kept list of "which keys have a
+ * door" falls behind the instance and the fields added after it was written
+ * are silently dropped. `journalPatch`'s own properties are the answer, and
+ * they come off `/api/v2/openapi.json` at run time.
+ *
+ * Two things are therefore *not* sent, correctly and by construction:
+ * `owner.tel`, `owner.telProvenAt` and `owner.telProvenMethod` — the proven
+ * telephone number and its proof, which live in the file on disk, are read
+ * back by the instance's own `lib/ownerTel.ts`, and have no door because
+ * proving a number is a round trip a file cannot perform. The API's own owner
+ * sub-schema is `{name, nickname, email}` with `additionalProperties: false`,
+ * so sending them would be refused anyway — this drops them before the call
+ * rather than papering over the refusal.
+ */
+async function sendJournal() {
+  if (!journal.config) return;
+  let writable = null;
+  try {
+    const { doc } = await openapi();
+    writable = Object.keys(requestSchema(doc, "/api/v2/{user}", "patch")?.properties ?? {});
+  } catch (error) {
+    say(`  ✗ could not read which journal fields are writable: ${error.message}`);
+    refused += 1;
+    return;
+  }
+  if (!writable.length) {
+    say("  ✗ the contract lists no writable journal fields — not guessing at them");
+    refused += 1;
+    return;
+  }
+
+  const body = {};
+  for (const key of writable) {
+    if (journal.config[key] === undefined) continue;
+    body[key] = key === "owner" ? ownerSubset(journal.config.owner, existingJournal.doc?.owner) : journal.config[key];
+  }
+  if (!Object.keys(body).length) return;
+
+  // Nothing to say and nothing to send: the instance already holds exactly
+  // this. Compared rather than assumed, so a run does not PATCH the journal on
+  // every pass just to print a line.
+  const unchanged = Object.entries(body).every(
+    ([key, value]) => JSON.stringify(value) === JSON.stringify(existingJournal.doc?.[key]),
+  );
+  if (unchanged) return;
+
+  if (dry) { say(`  would correct  the journal (${Object.keys(body).join(", ")})`); return; }
+  const result = await call("PATCH", `/api/v2/${user}`, { body, ifMatch: existingJournal.etag });
+  if (!result.ok) { refuse(result, "the journal document"); return; }
+  say(`  corrected      the journal (${Object.keys(body).join(", ")})`);
+}
+
+/** The owner block the API takes — `{name, nickname, email}` — and nothing
+ * else. The three telephone fields stay on disk where the instance put them. */
+function ownerSubset(local, remote) {
+  if (!local || typeof local !== "object") return local;
+  const keys = remote && typeof remote === "object" ? Object.keys(remote) : ["name", "nickname", "email"];
+  return Object.fromEntries(keys.filter((k) => local[k] !== undefined).map((k) => [k, local[k]]));
+}
+
+if (!onlyTrip && touched("config.json")) {
+  say("\njournal");
+  await sendJournal();
 }
 
 // ── the figure library ─────────────────────────────────────────────────────

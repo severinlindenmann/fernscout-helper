@@ -292,8 +292,52 @@ const here = localManifest(dir, base.files);
  * nobody confirmed — keeps its previous entry, because recording it now would
  * quietly declare the pending thing done.
  */
-const pending = new Set(actions.map((a) => a.path));
-const moved = new Set(moving.map((a) => a.path));
+/**
+ * Did each thing this run said it would push actually land?
+ *
+ * **This is the check whose absence made the worst kind of bug possible.**
+ * `config.json` is in the manifest, so a `sync up` planned a push for it, said
+ * `↑ config.json — changed locally`, handed the list to `publish` — which had
+ * no door for the journal document at all — and then wrote the sync state
+ * recording that both sides agreed. The next `sync down` therefore had nothing
+ * to pull, and an owner's renamed journal was gone for good, silently. That is
+ * verbatim the failure `syncManifest.mjs`'s own header warns about: a changed
+ * file never synced in either direction while both sides believe they agree.
+ *
+ * The journal now has a door (publish sends it), and this is the guard for
+ * whatever the next one is: a pushed path whose remote hash did not move —
+ * or which is still not there at all — is **not** recorded as agreed, is named
+ * out loud, and makes the run exit non-zero. The next run then plans it again
+ * rather than believing a push that never happened.
+ *
+ * Note what it does not claim: a push that landed is not required to arrive
+ * byte-identical, because the typed routes normalise what they are given.
+ * "Did the remote move" is the question a client can honestly ask.
+ */
+function landed(action) {
+  const before = base.files[action.path];
+  const after = settled[action.path];
+  if (!after) return false;                      // still not there
+  if (!before) return true;                      // new, and now on the site
+  return after.hash !== (before.remote ?? before.hash);
+}
+
+const stalled = direction === "up" ? pushes.filter((a) => !landed(a)) : [];
+if (stalled.length) {
+  console.error(
+    `\n✗ ${stalled.length} file${stalled.length === 1 ? "" : "s"} ${stalled.length === 1 ? "was" : "were"} planned for the site and ` +
+    `${stalled.length === 1 ? "did" : "do"} not appear to have landed:`,
+  );
+  for (const a of stalled) console.error(`    ↑ ${a.path}  — ${a.reason}`);
+  console.error(
+    "\nThe sync state does NOT record these as agreed, so the next run will plan them again\n" +
+    "rather than believing a push that did not happen. Read what publish printed above: a\n" +
+    "path with no door on the instance is the shape this guard exists for.",
+  );
+}
+
+const pending = new Set([...actions.map((a) => a.path), ...stalled.map((a) => a.path)]);
+const moved = new Set(moving.filter((a) => direction === "down" || landed(a)).map((a) => a.path));
 const files = { ...base.files };
 for (const path of new Set([...Object.keys(here), ...Object.keys(settled)])) {
   if (pending.has(path) && !moved.has(path)) continue;
@@ -302,3 +346,4 @@ for (const path of new Set([...Object.keys(here), ...Object.keys(settled)])) {
 }
 writeBase(dir, { site: SITE, user, files, syncedAt: new Date().toISOString() });
 console.log(`Sync state written — ${Object.keys(files).length} file${Object.keys(files).length === 1 ? "" : "s"} both sides agree on.`);
+if (stalled.length) process.exit(1);
