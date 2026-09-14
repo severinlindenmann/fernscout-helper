@@ -4,10 +4,30 @@
 // from, and hands the whole thing over — `validate.mjs` says what is wrong
 // with it and `publish.mjs` sends it. Two readers would have drifted; this is
 // the one.
+//
+// **The folder holds the instance's own documents, since B1715.** It used to
+// hold Markdown with frontmatter — `trip.md`, `costs.md`, `plan.md`,
+// `entries/<slug>.md` — and the instance stored JSON, so these tools spent
+// their lives translating between two shapes. That is what made a first sync
+// plan `{pull: 778, push: 419}` with *zero* paths in common: every day would
+// have been pulled as `.json` and pushed as `.md`, every photograph pulled
+// under its content hash and pushed under its local number. One shape ends
+// that by construction:
+//
+//   content/<user>/config.json
+//   content/<user>/figures/<id>.json
+//   content/<user>/trips/<trip>/trip.json            costs and plan are sections of it
+//   content/<user>/trips/<trip>/entries/<YYYY-MM-DD-slug>.json
+//   content/<user>/trips/<trip>/media/<day-slug>/<hash>.<ext>  + .meta.json sidecars
+//   content/<user>/trips/<trip>/originals/<day-slug>/<name>    the print masters
+//
+// A folder written by the old tools is converted once — `node
+// .claude/skills/shared/convert.mjs <user>` — rather than read by a second
+// parser kept alive here forever. `frontmatter.mjs` survives for exactly that
+// conversion, and for nothing else.
 import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { ROOT } from "./lib.mjs";
-import { parseFrontmatter } from "./frontmatter.mjs";
 
 // `content/` is where a real person's journal lives, and it is gitignored —
 // correctly, since it is somebody's photographs. `selftest.mjs` needs fixture
@@ -69,73 +89,119 @@ export function suggestedContentDir() {
   return null;
 }
 
-function readMarkdown(path) {
+/**
+ * One JSON document, with the parse failure kept rather than thrown.
+ *
+ * A file that will not parse is a real thing to report — half-written by a
+ * killed run, hand-edited into garbage — and it must not take the rest of the
+ * journal down with it. `document` is null exactly when `problem` is not.
+ */
+export function readDocument(path) {
   if (!existsSync(path)) return null;
   const text = readFileSync(path, "utf8");
-  const { data, body, problems } = parseFrontmatter(text);
-  return { path, data, body: body.trim(), problems, text };
+  try {
+    return { path, document: JSON.parse(text), problem: null, text };
+  } catch (error) {
+    return { path, document: null, problem: error.message, text };
+  }
 }
 
-/** Every file of one journal, parsed. `trips[].entries[]` are in file order. */
+/** Files that are documents rather than the directory's furniture. Sidecars
+ * (`<name>.jpg.meta.json`) are the instance's own notes about a photograph,
+ * not documents in their own right, and are read through `mediaSidecar`. */
+function jsonFiles(dir) {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((f) => f.endsWith(".json") && !f.startsWith(".") && !f.includes(".meta."))
+    .sort();
+}
+
+function directories(dir) {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((name) => !name.startsWith(".") && statSync(join(dir, name)).isDirectory());
+}
+
+/** Every file of one journal, parsed. `trips[].entries[]` are in file order,
+ * which for a day is date order: the filename begins with its date. */
 export function readJournal(user) {
   const dir = join(CONTENT, user);
   if (!existsSync(dir)) throw new Error(`No such journal: content/${user}`);
 
-  let config = null;
-  let configProblem = null;
   const configPath = join(dir, "config.json");
-  if (existsSync(configPath)) {
-    try { config = JSON.parse(readFileSync(configPath, "utf8")); }
-    catch (error) { configProblem = error.message; }
-  }
+  const configRead = readDocument(configPath);
+
+  // The journal-wide figure library (at most ten) — v1 described who was on a
+  // trip inline on the trip itself; v2 names figures created once for the
+  // journal and referenced from a trip. One file per figure, named by its id.
+  const figuresDir = join(dir, "figures");
+  const figures = jsonFiles(figuresDir).map((file) => ({
+    id: file.replace(/\.json$/, ""),
+    ...readDocument(join(figuresDir, file)),
+  }));
 
   const tripsDir = join(dir, "trips");
-  const trips = !existsSync(tripsDir) ? [] : readdirSync(tripsDir)
-    .filter((name) => !name.startsWith(".") && statSync(join(tripsDir, name)).isDirectory())
-    .sort()
-    .map((id) => {
-      const tripDir = join(tripsDir, id);
-      const entriesDir = join(tripDir, "entries");
-      const mediaDir = join(tripDir, "media");
-      const entries = !existsSync(entriesDir) ? [] : readdirSync(entriesDir)
-        .filter((f) => f.endsWith(".md"))
-        .sort()
-        .map((file) => {
-          const parsed = readMarkdown(join(entriesDir, file));
-          // The filename is the day's identity: the date orders it and the
-          // slug addresses it. A frontmatter date that disagrees is a real
-          // problem, and the validator says so — this only records both.
-          const match = file.match(/^(\d{4}-\d{2}-\d{2})-(.+)\.md$/);
-          return { ...parsed, file, fileDate: match?.[1] ?? null, slug: match?.[2] ?? file.replace(/\.md$/, "") };
-        });
-      const mediaFolders = !existsSync(mediaDir) ? [] : readdirSync(mediaDir)
-        .filter((name) => !name.startsWith(".") && statSync(join(mediaDir, name)).isDirectory());
-      return {
-        id,
-        dir: tripDir,
-        trip: readMarkdown(join(tripDir, "trip.md")),
-        costs: readMarkdown(join(tripDir, "costs.md")),
-        plan: readMarkdown(join(tripDir, "plan.md")),
-        entries,
-        mediaDir,
-        mediaFolders,
-      };
+  const trips = directories(tripsDir).sort().map((id) => {
+    const tripDir = join(tripsDir, id);
+    const entriesDir = join(tripDir, "entries");
+    const mediaDir = join(tripDir, "media");
+    const originalsDir = join(tripDir, "originals");
+
+    const entries = jsonFiles(entriesDir).map((file) => {
+      const read = readDocument(join(entriesDir, file));
+      // The filename is the day's identity, and in v2 it IS the slug:
+      // `2026-08-26-hoi-an.json` is the day at `.../days/2026-08-26-hoi-an`.
+      // The date is its first three segments, and a `date` inside the
+      // document that disagrees is a real problem the validator reports —
+      // this only records both.
+      const slug = file.replace(/\.json$/, "");
+      const match = slug.match(/^(\d{4}-\d{2}-\d{2})-(.+)$/);
+      return { ...read, file, slug, fileDate: match?.[1] ?? null, bareSlug: match?.[2] ?? slug };
     });
 
-  return { user, dir, config, configPath, configProblem, trips };
+    return {
+      id,
+      dir: tripDir,
+      trip: readDocument(join(tripDir, "trip.json")),
+      entries,
+      mediaDir,
+      mediaFolders: directories(mediaDir),
+      originalsDir,
+      originalFolders: directories(originalsDir),
+    };
+  });
+
+  return {
+    user,
+    dir,
+    config: configRead?.document ?? null,
+    configPath,
+    configProblem: configRead?.problem ?? null,
+    figures,
+    trips,
+  };
 }
 
 /**
- * The file a `gallery:` src points at.
+ * The file a day's media `src` points at.
  *
- * `src` is a URL as the site serves it — `/media/<trip>/<day>/01.jpg` — and on
- * disk that is `trips/<trip>/media/<day>/01.jpg`. Resolving it is the only way
- * to answer whether the photograph is actually there, which is the check a
- * server cannot make for a folder it has never seen.
+ * `src` is a URL as the site serves it —
+ * `/media/<trip>/<day-slug>/<hash>.jpg` — and on disk that is
+ * `trips/<trip>/media/<day-slug>/<hash>.jpg`. Resolving it is the only way to
+ * answer whether the photograph is actually there, which is the check a server
+ * cannot make for a folder it has never seen.
  */
-export function galleryFile(journal, trip, src) {
+export function mediaFile(journal, src) {
   if (typeof src !== "string") return null;
   const match = src.match(/^\/media\/([^/]+)\/(.+)$/);
   if (!match) return null;
   return join(journal.dir, "trips", match[1], "media", match[2]);
+}
+
+/** The sidecar the instance writes beside a stored photograph — what the file
+ * was called before it was renamed to its hash, its dimensions, its type. Read
+ * when it is there and simply absent when it is not; nothing is inferred from
+ * its absence. */
+export function mediaSidecar(file) {
+  const read = readDocument(`${file}.meta.json`);
+  return read?.document ?? null;
 }

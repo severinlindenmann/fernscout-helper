@@ -1,8 +1,18 @@
 // Talking to a Fernscout instance, and keeping a copy of what it published.
 //
 // The instance is the authority on what it will accept, and it says so at
-// `<site>/openapi.json`. Fetched once and cached under `export/.schema/`, so a
-// validation run works on a train and a publish run does not ask twice.
+// `<site>/api/v2/openapi.json` (the shapes) and `<site>/api/v2/status` (the
+// capabilities, the limits and the prices). Both are fetched once and cached
+// under `export/.schema/`, so a validation run works on a train and a publish
+// run does not ask twice.
+//
+// **This is v2, and v1 is not a fallback.** The whole write surface these
+// tools used — `POST /api/v1/journals`, `/api/v1/{user}/config`, `POST
+// .../trips`, `POST .../days`, the per-field trip PATCHes — was deleted with
+// the v2 migration and answers 404. `/openapi.json` still answers, and that is
+// the trap this file used to walk into: it is deliberately scoped to the
+// surviving v1 and auth doors, so discovery "worked" and described none of the
+// calls this repository makes. The v2 document is the contract.
 import { mkdirSync, readFileSync, writeFileSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { ROOT } from "./lib.mjs";
@@ -14,15 +24,12 @@ const CACHE = join(ROOT, "export", ".schema");
  * Where one cached contract lives, with the directory made ready for it.
  *
  * **The `mkdirSync` is the point** — B1582. It used to sit in `openapi()`
- * alone, while `health()` and `contentModel()` wrote into the same directory
- * and assumed somebody else had made it. That held right up until the
- * directory was not there: `writeFileSync` throws `ENOENT`, the `catch` around
- * the fetch swallows it, and `health()` reports *"Could not reach <site>"*
- * about a server that had just answered. Deleting the cache to force a fresh
- * fetch is the obvious thing to do and was the thing that broke it.
- *
- * The three call sites also each built this filename themselves, which is one
- * expression in three places — so the fix and the tidy are the same edit.
+ * alone, while the other fetchers wrote into the same directory and assumed
+ * somebody else had made it. That held right up until the directory was not
+ * there: `writeFileSync` throws `ENOENT`, the `catch` around the fetch
+ * swallows it, and the tool reports *"Could not reach <site>"* about a server
+ * that had just answered. Deleting the cache to force a fresh fetch is the
+ * obvious thing to do and was the thing that broke it.
  */
 function cacheFile(suffix = "") {
   mkdirSync(CACHE, { recursive: true });
@@ -44,155 +51,88 @@ function readCache(path) {
 }
 
 /**
- * The instance's own contract.
+ * One cached document, with the same rules for all of them.
  *
- * `offline` uses the cached copy and never touches the network; without a
- * usable cached copy that is an error rather than an empty schema, because a
- * validator that checks nothing and says "no problems" is worse than one that
- * refuses to run.
+ * `recognise` is what makes a cached copy trustworthy — not its mtime. A
+ * document of the wrong shape (an older cache format, a half-written file, a
+ * v1 document where a v2 one was wanted) cannot be told from a current one by
+ * looking at the file, so it is always treated as stale and refetched however
+ * new it is. B579 is the ticket: a `media`-less cached `/api/health` read as
+ * "this instance has no upload limits", and every check that depended on them
+ * silently said nothing.
  */
-export async function openapi({ offline = false, refresh = false } = {}) {
-  const path = cacheFile();
-  const cached = existsSync(path);
-  const cachedDoc = cached ? readCache(path) : null;
-  const usable = cachedDoc !== null;
+async function cachedDocument(url, suffix, recognise, { offline = false, refresh = false } = {}) {
+  const path = cacheFile(suffix);
+  const cached = existsSync(path) ? readCache(path) : null;
+  const usable = cached !== null && recognise(cached);
   const fresh = usable && Date.now() - statSync(path).mtimeMs < FRESH_MS;
 
   if (offline || (fresh && !refresh)) {
-    if (!cached) {
-      throw new Error(`No cached schema for ${SITE}. Run once with a network connection first.`);
-    }
-    if (!usable) {
-      throw new Error(`Cached schema at ${path} is not valid JSON. Delete it and run online, or run without --offline.`);
-    }
-    return { doc: cachedDoc, from: "cache", site: SITE };
+    if (cached === null) throw new Error(`No cached ${url} for ${SITE}. Run once with a network connection first.`);
+    if (!usable) throw new Error(`Cached ${url} at ${path} is not a document this version recognises. Delete it and run online.`);
+    return { doc: cached, from: "cache", site: SITE };
   }
 
   try {
-    const response = await fetch(`${SITE}/openapi.json`, { headers: { accept: "application/json" } });
+    const response = await fetch(`${SITE}${url}`, { headers: { accept: "application/json" } });
     if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
     const doc = await response.json();
+    if (!recognise(doc)) throw new Error(`${SITE}${url} answered something this version does not recognise`);
     writeFileSync(path, JSON.stringify(doc, null, 1));
     return { doc, from: SITE, site: SITE };
   } catch (error) {
-    if (usable) return { doc: cachedDoc, from: "cache (fetch failed)", site: SITE };
-    throw new Error(`Could not reach ${SITE}/openapi.json and have no usable cached copy: ${error.message}`);
+    if (usable) return { doc: cached, from: "cache (fetch failed)", site: SITE };
+    throw new Error(`Could not reach ${SITE}${url} and have no usable cached copy: ${error.message}`);
   }
 }
 
 /**
- * What this server can do, and what it will accept in an upload.
+ * The instance's own contract — every v2 path, verb, request body and refusal.
  *
- * `/api/health` is public and answers `capabilities` (every optional feature,
- * and *why* an absent one is absent) and `media` (the formats and the size
- * limits). Both were things these tools used to carry their own copy of, and
- * both had drifted: the format list here offered `jpg` and `avif`, neither of
- * which the server takes, so a batch was accepted by the local check and
- * refused half-way through the upload.
+ * Recognised by `info.version === 2`, which is the one check that would have
+ * caught the whole of this migration: the old code fetched `/openapi.json`,
+ * got a perfectly valid `info.version: 1` document listing thirteen auth
+ * paths, cached it, and reported success.
+ *
+ * Having none of this is an error rather than an empty schema, because a
+ * validator that checks nothing and says "no problems" is worse than one that
+ * refuses to run.
  */
-export async function health({ offline = false, refresh = false } = {}) {
-  const path = cacheFile("-health");
-  const cached = existsSync(path);
-  // `readCache` already folds "not valid JSON" into the same `null` as "not
-  // there" — a corrupt file (half-written, hand-edited into garbage) is the
-  // most unrecognised shape there is, and it must not survive a single run:
-  // without this it throws a raw JSON syntax error out of `JSON.parse` here,
-  // gets caught by validate.mjs's existing "(health)" warning, and is never
-  // rewritten — every later run hits the same corrupt bytes and degrades the
-  // same way, forever, which is exactly the check-loss this ticket is about,
-  // just reached by a different door than a missing `media` key.
-  const cachedDoc = cached ? readCache(path) : null;
-  // A cached document with no `media` key is not an instance that has no
-  // upload limits — the server has carried `media` since before this cache
-  // format existed, so its absence means the copy predates it. The two are
-  // indistinguishable by looking at the JSON alone, and treating the older
-  // shape as "no limits" is exactly how B579 went unnoticed: the checks that
-  // read `media` simply had nothing to read and said nothing about it. So an
-  // unrecognised shape — no `media` key, or not parseable at all — is always
-  // treated as stale, however new the mtime is, and refetched — a fresh
-  // /api/health is cheap, and `offline` is still the one way to force the old
-  // copy through anyway.
-  const recognised = cachedDoc !== null && cachedDoc.media !== undefined;
-  const fresh = cached && recognised && Date.now() - statSync(path).mtimeMs < FRESH_MS;
-  if (offline || (fresh && !refresh)) {
-    if (!cached) throw new Error(`No cached /api/health for ${SITE}. Run once online first.`);
-    if (cachedDoc === null) {
-      throw new Error(`Cached /api/health at ${path} is not valid JSON. Delete it and run online, or run without --offline.`);
-    }
-    return { doc: cachedDoc, from: "cache" };
-  }
-  try {
-    const response = await fetch(`${SITE}/api/health`, { headers: { accept: "application/json" } });
-    const doc = await response.json();
-    writeFileSync(path, JSON.stringify(doc, null, 1));
-    return { doc, from: SITE };
-  } catch (error) {
-    if (cachedDoc !== null) return { doc: cachedDoc, from: "cache (fetch failed)" };
-    throw new Error(`Could not reach ${SITE}/api/health and have no usable cached copy: ${error.message}`);
-  }
+export async function openapi(options = {}) {
+  return cachedDocument(
+    "/api/v2/openapi.json",
+    "",
+    (doc) => Number(doc?.info?.version) === 2 && typeof doc?.paths === "object",
+    options,
+  );
 }
 
 /**
- * The file shape itself — `<site>/content-model.json`, B608's answer to the
- * one part of the contract `openapi.json` and `/api/health` cannot describe:
- * which keys a file on disk may carry. Same cache, same day, same
- * `--offline`/`--refresh` — this is not a second caching path, it is the same
- * one with a third file in it.
+ * What this server can do, what it will accept in an upload, and what things
+ * cost — `<site>/api/v2/status`, public and unauthenticated.
  *
- * Unlike `openapi()` and `health()`, having none of this is an ordinary,
- * expected outcome rather than a failure to surface: an instance older than
- * B608 simply does not publish it yet, and `contentModel.mjs` falls back to
- * its committed snapshot for exactly that reason. So this never throws. A 404, an
- * unreachable host, a document with no recognisable `contentModel` version,
- * and one that does not even parse as JSON are all reported back as `doc:
- * null` with a `note` saying which — the caller decides what "no manifest"
- * means for it, this function's job stops at "here is what happened".
- *
- * "Unrecognised" is treated exactly the way B579 made `health()` treat a
- * `media`-less cache: not a fresh document with nothing to say, but a stale
- * one worth refetching regardless of its mtime. A response that is not valid
- * JSON, or has no integer `contentModel`, cannot be told apart from an old
- * cached copy by looking at the file alone — so both are refetched rather
- * than trusted.
+ * This replaces `/api/health`, which still answers and is still the operator's
+ * own page; `limits` is what these tools need, and it is here. **Read the
+ * numbers, never carry them.** `publish` had `40` written into it twice as a
+ * literal; the value was right and the source was wrong, and the day the
+ * instance raises it every clone of this repository is silently a version
+ * behind.
  */
-export async function contentModel({ offline = false, refresh = false } = {}) {
-  const path = cacheFile("-content-model");
-  const cached = existsSync(path);
-  const cachedDoc = cached ? readCache(path) : null;
-  const recognised = cachedDoc !== null && Number.isInteger(cachedDoc.contentModel);
-  const fresh = cached && recognised && Date.now() - statSync(path).mtimeMs < FRESH_MS;
+export async function status(options = {}) {
+  return cachedDocument(
+    "/api/v2/status",
+    "-status",
+    (doc) => typeof doc?.capabilities === "object" && typeof doc?.limits === "object",
+    options,
+  );
+}
 
-  if (offline || (fresh && !refresh)) {
-    if (!cached) return { doc: null, from: "none", note: `no cached content model for ${SITE} — run once online first` };
-    if (!recognised) return { doc: null, from: "cache", note: `cached content model at ${path} is not a recognised document` };
-    return { doc: cachedDoc, from: "cache" };
-  }
-
-  let response;
-  try {
-    response = await fetch(`${SITE}/content-model.json`, { headers: { accept: "application/json" } });
-  } catch (error) {
-    if (recognised) return { doc: cachedDoc, from: "cache (fetch failed)" };
-    return { doc: null, from: "none", note: `could not reach ${SITE}/content-model.json: ${error.message}` };
-  }
-  if (response.status === 404) {
-    return { doc: null, from: "none", note: `${SITE} publishes no /content-model.json — an instance older than B608` };
-  }
-  if (!response.ok) {
-    if (recognised) return { doc: cachedDoc, from: "cache (fetch failed)" };
-    return { doc: null, from: "none", note: `${SITE}/content-model.json answered ${response.status} ${response.statusText}` };
-  }
-  let doc;
-  try { doc = await response.json(); }
-  catch {
-    if (recognised) return { doc: cachedDoc, from: "cache (fetch failed)" };
-    return { doc: null, from: "none", note: `${SITE}/content-model.json did not answer with JSON` };
-  }
-  writeFileSync(path, JSON.stringify(doc, null, 1));
-  if (!Number.isInteger(doc.contentModel)) {
-    return { doc: null, from: "none", note: `${SITE}/content-model.json has no recognisable "contentModel" version` };
-  }
-  return { doc, from: SITE };
+/** The instance's own numbers, with no local defaults behind them: a missing
+ * limit is `undefined`, and a caller deciding what to do about that is better
+ * than a caller quietly using a number this repository made up. */
+export async function limits(options = {}) {
+  const { doc, from } = await status(options);
+  return { limits: doc.limits ?? {}, media: doc.media ?? {}, capabilities: doc.capabilities ?? {}, from };
 }
 
 /** Follow a `$ref` into the document's own components. */
@@ -205,13 +145,33 @@ export function deref(schema, doc) {
  * The request schema for one operation, refs resolved one level.
  *
  * This is the whole point of fetching the document: what a field may be is the
- * instance's answer, not ours. `validate.mjs` reads types and enums out of
- * here and falls back to its own rules only for the keys that never cross the
- * API at all.
+ * instance's answer, not ours.
+ *
+ * `requestBody` is the OpenAPI key. The generated v2 document emitted
+ * `request` instead — not a key the specification has, so every standard tool
+ * read two dozen write operations as taking no body at all — until fernscout's
+ * B1714. Both are read here: an instance that has not been deployed since is
+ * still describable, and the day it is, nothing here changes.
  */
 export function requestSchema(doc, path, verb) {
-  const body = doc?.paths?.[path]?.[verb]?.requestBody?.content?.["application/json"]?.schema;
+  const operation = doc?.paths?.[path]?.[verb];
+  const body = (operation?.requestBody ?? operation?.request)?.content?.["application/json"]?.schema;
   return body ? deref(body, doc) : null;
+}
+
+/**
+ * Which sections one write must either carry or decline, and why.
+ *
+ * The asked-or-declined rule is v2's deepest change, and the document states
+ * it per operation as `x-required-or-declined` on the body schema: a list of
+ * `{field, whyRequired, toDecline}`. Read rather than copied, for the same
+ * reason every other list here is read — this one is fourteen entries long for
+ * a day, and it grows.
+ */
+export function declinables(doc, path, verb) {
+  const schema = requestSchema(doc, path, verb);
+  const declared = schema?.["x-required-or-declined"];
+  return Array.isArray(declared) ? declared : [];
 }
 
 export function token() {
@@ -232,12 +192,18 @@ export function token() {
 }
 
 /**
- * One API call. Returns `{ status, body }` — never throws on a 4xx, because
- * the caller's whole job is deciding what a 404 means (usually: create it).
+ * One API call. Returns `{ status, ok, body, etag }` — never throws on a 4xx,
+ * because the caller's whole job is deciding what a refusal means.
+ *
+ * `etag` is carried out because v2 needs it: `PUT` is create-only, and writing
+ * over a document that already exists is a deliberate act that has to send
+ * `If-Match` with the ETag of the document it read. Dropping the header here
+ * would make every replace a `409 stale_document` with no way to proceed.
  */
-export async function call(method, path, { body, headers = {}, auth = true } = {}) {
+export async function call(method, path, { body, headers = {}, auth = true, ifMatch } = {}) {
   const init = { method, headers: { accept: "application/json", ...headers } };
   if (auth) init.headers.authorization = `Bearer ${token()}`;
+  if (ifMatch) init.headers["if-match"] = ifMatch;
   if (body instanceof FormData) init.body = body;
   else if (body !== undefined) {
     init.headers["content-type"] = "application/json";
@@ -247,35 +213,49 @@ export async function call(method, path, { body, headers = {}, auth = true } = {
   const text = await response.text();
   let parsed = null;
   try { parsed = text ? JSON.parse(text) : null; } catch { parsed = { raw: text.slice(0, 400) }; }
-  return { status: response.status, ok: response.ok, body: parsed };
+  return { status: response.status, ok: response.ok, body: parsed, etag: response.headers.get("etag") };
 }
 
 /**
  * An API refusal, rendered.
  *
- * Two shapes, and printing only the first one is how a real publish run came
- * back as a bare "422 incomplete_day" with everything the server had said
- * about how to fix it thrown away:
+ * Three shapes now, and printing only the first is how a real publish run came
+ * back as a bare "422 incomplete" with everything the server had said about
+ * how to fix it thrown away:
  *
- *   `problems[]` — the shape of the day is wrong. Field, what arrived, what
- *   was expected.
- *   `missing[]`  — the day is not wrong, it is incomplete: the trip keeps
- *   track of something this day says nothing about. Each entry carries `why`,
- *   `send` and `decline`, and the decline matters as much as the send — it is
- *   the answer for a day that genuinely had none, and the alternative to
- *   inventing one.
+ *   `problems[]` — the shape of the document is wrong. Field, what arrived,
+ *   what was expected.
+ *   `details.missing[]` — the document is not wrong, it is incomplete: a
+ *   section it must either answer or decline. The decline matters as much as
+ *   the send — it is the answer for a day that genuinely had none, and the
+ *   alternative to inventing one.
+ *   `details.current` — a `409 stale_document` hands back the document as it
+ *   stands now, which is what a caller needs in order to retry with
+ *   `If-Match`.
  */
 export function refusal(result) {
   const b = result.body ?? {};
   const lines = [`${result.status} ${b.error ?? "refused"}`];
   if (b.message) lines.push(`      ${b.message}`);
-  for (const p of Array.isArray(b.problems) ? b.problems : []) {
-    lines.push(`      ${p.field}: ${p.hint ?? `expected ${p.expected}, got ${p.got}`}`);
+  const details = b.details ?? {};
+  const problems = [
+    ...(Array.isArray(b.problems) ? b.problems : []),
+    ...(Array.isArray(details.problems) ? details.problems : []),
+    ...(Array.isArray(details) ? details : []),
+  ];
+  for (const p of problems) {
+    if (typeof p === "string") { lines.push(`      ${p}`); continue; }
+    lines.push(`      ${p.field}: ${p.hint ?? p.problem ?? `expected ${p.expected}, got ${p.got}`}`);
   }
-  for (const m of Array.isArray(b.missing) ? b.missing : []) {
-    lines.push(`      ${m.field}: ${m.why}`);
+  const missing = Array.isArray(details.missing) ? details.missing : Array.isArray(b.missing) ? b.missing : [];
+  for (const m of missing) {
+    if (typeof m === "string") { lines.push(`      ${m}`); continue; }
+    lines.push(`      ${m.field}: ${m.why ?? m.whyRequired ?? ""}`.trimEnd());
     if (m.send) lines.push(`          send    ${m.send}`);
-    if (m.decline) lines.push(`          or say  ${m.decline}`);
+    if (m.decline ?? m.toDecline) lines.push(`          or say  ${m.decline ?? m.toDecline}`);
+  }
+  if (details.current && (details.current.slug || details.current.id)) {
+    lines.push(`      the stored document is ${details.current.slug ?? details.current.id} — read it and send If-Match to replace it`);
   }
   return lines.join("\n");
 }
