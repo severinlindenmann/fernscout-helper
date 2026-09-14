@@ -62,6 +62,17 @@ something a file diff gets to make.
   history is every address somebody sleeps at; what a reader ever sees is the
   derived line for one trip, and deleting `gps/` leaves every trip rendering
   identically. That is asserted by test on the instance, not promised here.
+- **`config.json` comes down whole, and goes up in part.** The file a pull
+  gives you is the journal exactly as the instance stores it, including
+  `owner.tel`, `owner.telProvenAt` and `owner.telProvenMethod` — the proven
+  telephone number and the record of how it was proven. Those three have no
+  door and never will: proving a number is a round trip a file cannot perform,
+  and the API's owner block is `{name, nickname, email}` with nothing else
+  accepted. So a push sends the writable fields the contract lists and drops
+  those, and restoring them into a journal is an operator's job rather than a
+  client's. **Treat a pulled `config.json` as personal data**: it carries
+  somebody's telephone number in plain text, in a folder people copy between
+  machines.
 - ~~**`originals/`**~~ — **they are in the sync now** (fernscout B1719). The
   full-resolution masters used to stay on the server, and every run printed how
   many files and bytes it had not fetched. That was honest, and it was still a
@@ -88,7 +99,17 @@ had — a hash — so a fourteen-day trip is no longer re-`PATCH`ed to correct o
 day.
 
 `publish` on its own is unchanged and still works exactly as before, including
-its own `--dry-run`, `--drafts`, `--weather` and `--replace-media`.
+its own `--dry-run` and `--drafts`.
+
+**A push that does not land is not recorded as agreement.** After the up leg,
+every path it planned is checked against the site's own manifest: one whose
+remote copy did not move, or which is still not there, is named, kept out of
+the sync state, and makes the run exit non-zero. That guard exists because
+`config.json` was in the manifest and had no door in `publish` — so a sync
+planned it, said `↑ config.json — changed locally`, sent nothing, exited 0 and
+then recorded that both sides agreed. The next pull saw nothing to bring back
+either, and an owner's renamed journal was gone for good. The journal has a
+door now; this is for whatever the next one is.
 
 **There is no file `PUT` on the instance, and that is deliberate.** A raw byte
 door onto a day would bypass every validator there is — the required fields,
