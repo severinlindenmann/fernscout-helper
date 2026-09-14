@@ -4,966 +4,232 @@
 //   node publish.mjs --user severin                 the whole journal
 //   node publish.mjs --user severin --trip algarve-2026
 //   node publish.mjs --user severin --dry-run       say what it would do
-//   node publish.mjs --user severin --dry-run --offline   … without asking the site
 //   node publish.mjs --user severin --drafts        write the days, do not publish them
-//   node publish.mjs --user severin --weather       ask the archive for every day's weather
 //
-// `--weather` is the one place this repository asks a whole trip a single
-// question rather than fourteen days one at a time — see AGENTS.md. It sends
-// `weather: true` on every day that has `lat`/`lng`, which asks the server to
-// look that day up in the Open-Meteo archive; a day with no coordinates is
-// left alone rather than asked, because the server has nothing to look up
-// and asking anyway would claim a certainty nobody has. It also needs the
-// journal's own `config.json` to have switched `features.weather` on —
-// `/api/health`'s capability is only the server's ceiling, and a request sent
-// under a journal that has not opted in comes back 200 and does nothing, so
-// this checks first and says plainly what to add rather than sending it.
+// **This is a much smaller program than it was, and that is the point.** v1
+// had a door per field — `PATCH .../visibility`, `.../rates`, `.../people`,
+// `.../travellers`, `.../tracks`, `PUT .../costs` — so publishing meant
+// knowing which of eleven calls wrote which key, and a key nobody had wired up
+// was a key that silently never left the folder (B1518 and B1569 are two years
+// of exactly that). v2 is document-oriented: the file on disk IS the body, the
+// server owns the vocabulary, and this file's whole job is deciding **create
+// or correct**, then sending the document it already has.
 //
 // It asks nothing. Everything it does is decided by comparing what is on disk
 // with what the instance already has: a trip that is not there is created, a
-// day that is not there is written, a day that is there is patched, and
-// photographs that are not on the day yet are sent. Running it twice does the
-// same work as running it once.
+// day that is not there is written, a day that is there is corrected, and
+// photographs the day names but the instance does not hold are uploaded.
+// Running it twice does the same work as running it once.
 //
-// `--dry-run` still asks the site what each day already holds, because that
-// is the only way its printed counts can be the counts a real run would then
-// send — a plan is not a rehearsal if it guesses at the one number that
-// measures time, bandwidth and money. `--offline` (the same flag
-// `validate-content` uses) skips that asking and says so in what it prints:
-// a no-network plan is allowed to exist, but not to look like it asked.
+// **Three things it will not do, on purpose.**
 //
-// **It refuses to start while `validate.mjs` reports an error.** Publishing
-// content the instance will partly reject leaves a journal half-written, which
-// is worse than not starting — and the errors are cheap to read first.
-import { execFileSync } from "node:child_process";
-import { readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, relative, sep } from "node:path";
-import { fileURLToPath } from "node:url";
-import { arg, has } from "../shared/lib.mjs";
-import { SITE, call, health, refusal, token } from "../shared/api.mjs";
-import { galleryFile, readJournal } from "../shared/journal.mjs";
-import { TRIP_UPDATE_DOORS } from "../shared/tripFields.mjs";
-import { JOURNAL_COMPARABLE_NO_DOOR, JOURNAL_NO_UPDATE_DOOR, JOURNAL_UPDATE_DOORS } from "../shared/journalFields.mjs";
-import { DAY_UPDATE_DOORS, FALLBACK_RESERVED_WEATHER_SOURCES, isServerWeather } from "../shared/dayFields.mjs";
+// 1. **It never invents a decline.** Every optional section must be answered
+//    or named in `declined` with a real reason, and that reason is the owner's
+//    sentence, written in the folder. A `422 incomplete` is reported with the
+//    server's own list of what is open — never papered over with a plausible
+//    sentence, which would be a lie with an extra step.
+// 2. **It never publishes without the word.** `--drafts` writes and stops;
+//    without it, publishing is a separate call per day, and the person has to
+//    have said so in this conversation. "It looks finished" is not consent.
+// 3. **It sends no number it made up.** The per-day ceiling and the size
+//    limits come from `/api/v2/status`; the 40 that used to be written into
+//    this file twice was right only on the day somebody typed it.
+import { readFileSync, existsSync, statSync } from "node:fs";
+import { basename } from "node:path";
+import { call, limits, refusal, SITE } from "../shared/api.mjs";
+import { readJournal, mediaFile } from "../shared/journal.mjs";
+import { arg, die, has } from "../shared/lib.mjs";
 
-// Keys with their own dedicated door above, or sent after the day loop below
-// (cover) — subtracted from TRIP_UPDATE_DOORS rather than listed a second
-// time, so the general PATCH only ever sends what nothing else already has.
-const TRIP_DEDICATED_DOORS = new Set(["visibility", "listed", "teaser", "rates", "people", "travellers", "tracks", "cover", "intro"]);
-const TRIP_GENERAL_PATCH_KEYS = TRIP_UPDATE_DOORS.filter((key) => !TRIP_DEDICATED_DOORS.has(key));
-
-const HERE = dirname(fileURLToPath(import.meta.url));
 const user = arg("user");
-const only = arg("trip");
+const onlyTrip = arg("trip");
 const dry = has("dry-run");
-const offline = has("offline");
 const draftsOnly = has("drafts");
-// B1529 — this route matches an upload by basename, so a larger re-export of
-// a photo already sent under the same name was silently skipped, and the
-// only fix was 177 hand-driven DELETEs. `--replace-media` deletes the
-// remote copy first, by exact `src`, and re-sends the local file in its
-// place, rather than leaving it as though nothing had changed.
-const replaceMedia = has("replace-media");
-// The owner said the word for the whole trip, once — see AGENTS.md's "one
-// rule". Applied to every day that has lat/lng; a day with no coordinates
-// gets nothing rather than a guess, because the server has nothing to look up
-// and asking anyway would claim a certainty nobody has.
-const weather = has("weather");
-/**
- * Only re-send what actually differs — B491, and the reason `sync up` can
- * claim "nothing else was re-sent" rather than hoping nobody checks.
- *
- * A JSON array of journal-relative paths (`trips/x/entries/2026-01-01-a.md`,
- * `trips/x/media/a-day/01.jpg`), written by `sync.mjs` from its three-way
- * compare against the instance's own manifest. Without it this script does
- * what it always did: walk everything and let idempotence sort it out, which
- * is correct and re-`PATCH`es every day of a fourteen-day trip to change one.
- *
- * It narrows and never widens. A trip with no changed path under it is
- * skipped whole; a day whose own file and whose photographs are all unchanged
- * is skipped. Everything a changed path *does* touch runs exactly as before,
- * including the validate gate, which is not something a diff gets to skip.
- */
-const changedFile = arg("changed");
-const changed = changedFile ? new Set(JSON.parse(readFileSync(changedFile, "utf8"))) : null;
-const changedUnder = (prefix) => {
-  if (!changed) return true;
-  for (const path of changed) if (path.startsWith(prefix)) return true;
-  return false;
-};
-/** One named file of a trip, or "everything" when nothing is narrowing. */
-const changedIs = (path) => !changed || changed.has(path);
 
-if (!user) {
-  console.error("Which journal? node publish.mjs --user <username>");
-  process.exit(1);
-}
-if (offline && !dry) {
-  console.error("--offline only makes sense with --dry-run: a real run has to ask the site to send anything.");
-  process.exit(1);
-}
+if (!user) die("usage: node publish.mjs --user <username> [--trip <id>] [--dry-run] [--drafts]");
 
-const did = [];
-const note = (line) => { did.push(line); console.log(line); };
-const step = (what) => (dry ? `would ${what}` : what);
-
-/** Stop on anything the instance refused. A half-written journal is the one
- * outcome worse than not starting. */
-function refuse(result, what) {
-  console.error(`\n✗ ${what}\n      ${refusal(result).replace(/\n/g, "\n")}`);
-  console.error("\nNothing further was sent. Fix the above and run again — what already landed stays.");
-  process.exit(1);
-}
-
-/**
- * Set (or fix) the `slug:` line in an entry's own frontmatter — textually,
- * the same discipline the server itself uses when it edits a file (see
- * `spliceScalar` in the fernscout repo): find the line if it is there, replace
- * it; otherwise insert one just above the closing `---`. Never touches
- * anything else in the file, so a hand-written comment or key order survives.
- *
- * B578. A day's title is something a person edits — fixing a typo, rewording
- * it — and title+date used to be the *only* way this script found a day it
- * had already written. Recording the slug the instance actually assigned,
- * once, the way `id:` records a trip's own address, means a later run finds
- * the same day even after every other field on it has changed. Skipped
- * entirely on a file with no frontmatter block to edit, and never called
- * during `--dry-run` — a plan sends nothing, and that includes this.
- */
-function recordSlug(entry, slug) {
-  if (entry.data.slug === slug) return;
-  const lines = entry.text.split("\n");
-  if (lines[0]?.trim() !== "---") return;
-  const closing = lines.findIndex((line, i) => i > 0 && line.trim() === "---");
-  if (closing < 0) return;
-  const at = lines.findIndex((line, i) => i > 0 && i < closing && /^slug:(\s|$)/.test(line));
-  const rendered = `slug: "${slug}"`;
-  if (at >= 0) lines[at] = rendered;
-  else lines.splice(closing, 0, rendered);
-  const updated = lines.join("\n");
-  writeFileSync(entry.path, updated);
-  entry.text = updated;
-  entry.data.slug = slug;
-}
-
-// ── 1. the content has to be right before any of it is sent ────────────────
-if (!has("skip-validate")) {
-  try {
-    execFileSync(process.execPath, [join(HERE, "../validate-content/validate.mjs"), "--user", user], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-  } catch {
-    console.error(
-      "validate.mjs reports errors, so nothing was sent.\n" +
-      `Run:  node .claude/skills/validate-content/validate.mjs --user ${user}\n` +
-      "Fix what it marks ✗ and run this again. (--skip-validate overrides, and is almost never right.)",
-    );
-    process.exit(1);
-  }
-}
-
-/**
- * Fail here, with the instructions, rather than half-way through a journal.
- *
- * Unless a journal is being created: that path starts from an address and a
- * mailed code and ends holding a token of its own, so demanding one first
- * would be asking for the thing this run is about to produce.
- */
-const creating = Boolean(arg("email"));
-if (!creating) {
-  try { token(); } catch (missing) { console.error(missing.message); process.exit(1); }
-}
-
-/** What this server will take in an upload — its answer, not a guess here. */
-let LIMITS = {};
-/**
- * The weather source names only the server may claim — B1580, read rather
- * than remembered. An instance too old to publish them, or one that cannot be
- * reached, leaves this empty and `isServerWeather` falls back to the one value
- * every such instance has always refused; the line below says which happened,
- * because "we checked" and "we assumed" are different claims.
- */
-let reservedWeatherSources = [];
-let saidFallback = false;
-try {
-  const doc = (await health()).doc ?? {};
-  LIMITS = doc.media ?? {};
-  reservedWeatherSources = Array.isArray(doc.weather?.reservedSources) ? doc.weather.reservedSources : [];
-} catch (unreachable) {
-  // B1582 — this used to be `catch { LIMITS = {} }`, which lost the
-  // instance's upload limits **without a word** and left the batching below
-  // sizing itself against a hardcoded 64 MB guess. Those limits are in
-  // /api/health precisely so a caller does not have to guess (B540), and a
-  // run that silently reverted to guessing was the failure that put them
-  // there. Not fatal — the rest of a publish works fine, and a person who
-  // cannot reach /api/health can still write their days — so it says what it
-  // could not read and carries on.
-  LIMITS = {};
-  console.log(
-    `  note: could not read ${SITE}/api/health — ${unreachable.message}\n` +
-    `        Upload sizes will be batched against a default rather than this server's own\n` +
-    `        limits, and a batch too large for it will be refused rather than split.`,
-  );
-}
 const journal = readJournal(user);
-console.log(
-  `${SITE} · content/${user}` +
-  (dry ? ` · dry run, nothing is sent${offline ? " · offline — the photograph counts below are not checked against the site" : ""}` : "") +
-  "\n",
-);
+const say = (line) => console.log(line);
+let refused = 0;
 
-// `/api/health`'s capability is the server's ceiling; whether *this* journal
-// has opted in is `config.json`'s own `features.weather.enabled`, and the two
-// are checked separately on purpose. A `PATCH …/days/<slug>` with
-// `weather: true` under a journal that has not opted in comes back 200 and
-// fills in nothing — the server's own refusals never reach this call, so
-// there is no error here to catch and nothing this script can tell apart from
-// success. Sending it anyway would be fourteen requests that look like they
-// worked and were not.
-const weatherOn = journal.config?.features?.weather?.enabled === true;
-if (weather && !weatherOn) {
-  console.log(
-    "--weather was asked for, but this journal has not switched it on: add\n" +
-    '  "weather": { "enabled": true }\n' +
-    "to features in content/" + user + "/config.json, then run this again. Nothing about the " +
-    "weather was sent this run.\n",
-  );
+/** A refusal, said once, with everything the server offered about how to fix
+ * it. The old version printed `problems[]` and threw `missing[]` away, so a
+ * real run came back as a bare "422 incomplete_day" with the answer sitting in
+ * a body nobody rendered. */
+function refuse(result, what) {
+  refused += 1;
+  say(`  ✗ ${what}\n      ${refusal(result).split("\n").join("\n      ")}`);
+  return null;
 }
-const sendWeather = weather && weatherOn;
 
-// ── 2. the journal itself ──────────────────────────────────────────────────
-let status = process.env.FERNSCOUT_TOKEN
-  ? await call("GET", `/api/v1/${user}/status`)
-  : { ok: false, status: 404, body: null };
+/** What the instance already holds at one address, or null. A `GET` before
+ * every write, because v2's `PUT` is create-only: writing over a document that
+ * exists is a deliberate act that has to carry the ETag of the version it read
+ * (`If-Match`), and a create that finds something there answers 409 rather
+ * than overwriting it. */
+async function fetchDoc(path) {
+  const got = await call("GET", path);
+  return got.ok ? { doc: got.body, etag: got.etag } : null;
+}
 
 /**
- * The journal itself, when there is not one yet.
+ * Create it, or correct it.
  *
- * This is the one step that cannot be silent, and the reason is not a design
- * choice here: a new journal is bound to an address somebody owns, and the
- * server mails a six-digit code to it. No script can read their mail.
+ * One helper for trips and figures, because in v2 they are the same shape of
+ * problem: a client-chosen id, a whole document on disk, and a server that
+ * tells "new" from "replace" by whether the caller proved it had read what is
+ * there.
  *
- * So it is two runs and exactly one question, which is as close to "just
- * publish" as the address check allows:
- *
- *   node publish.mjs --user u --email you@example.com     asks for the code
- *   node publish.mjs --user u --email you@example.com --code 123456
- *
- * Everything after that — the trip, the days, the photographs, the publishing
- * — happens in the same run without asking anything.
+ * A correction is a `PATCH` rather than a `PUT`: the stored document carries
+ * things the folder does not — a published `status`, the width and height the
+ * server derived from the bytes at upload — and replacing it wholesale would
+ * take those with it.
  */
-if (status.status === 404 || status.status === 401) {
-  const email = arg("email");
-  const code = arg("code");
-  if (!email) {
-    console.error(
-      `There is no journal called "${user}" on ${SITE} yet.\n\n` +
-      "Creating one needs an address you own — a six-digit code goes to it, and no script\n" +
-      "can read your mail. Run this again with the address:\n\n" +
-      `  node publish.mjs --user ${user} --email <your address>\n\n` +
-      "then once more with the code it sends you.",
-    );
-    process.exit(1);
+async function send(path, document, what) {
+  const existing = await fetchDoc(path);
+  if (dry) {
+    say(`  ${existing ? "would correct " : "would create  "} ${what}`);
+    return existing?.doc ?? document;
   }
-  if (!code) {
-    // A dry run sends nothing, and that has to include this. It used to mail a
-    // real six-digit code from a run whose whole promise is "nothing is sent"
-    // — a person got a signup mail for a journal nobody had decided to create.
-    if (dry) {
-      console.log(
-        `Would ask ${SITE} to mail a signup code to ${email}, and stop there.\n` +
-        "A new journal is bound to an address somebody owns, so that step cannot be\n" +
-        "rehearsed. Run without --dry-run when they are ready, then again with --code.",
-      );
-      process.exit(0);
-    }
-    const asked = await call("POST", "/api/auth/signup/request", {
-      auth: false,
-      body: { username: user, email },
-    });
-    if (!asked.ok) refuse(asked, "POST /api/auth/signup/request");
-    console.log(
-      `A six-digit code is on its way to ${email}. It works for 30 minutes.\n` +
-      "When you have it, run:\n\n" +
-      `  node publish.mjs --user ${user} --email ${email} --code <the six digits>\n`,
-    );
-    process.exit(0);
-  }
-
-  const verified = await call("POST", "/api/auth/signup/verify", {
-    auth: false,
-    body: { username: user, email, code },
-  });
-  if (!verified.ok) refuse(verified, "POST /api/auth/signup/verify");
-
-  // config.json is the whole description of the journal, so the create call is
-  // built from it rather than from anything asked for here.
-  const c = journal.config ?? {};
-  const made = await call("POST", "/api/v1/journals", {
-    headers: { authorization: `Bearer ${verified.body.token}` },
-    auth: false,
-    body: {
-      username: user,
-      title: c.title ?? user,
-      ...(c.tagline ? { tagline: c.tagline } : {}),
-      ownerName: c.owner?.name ?? "",
-      ownerNickname: c.owner?.nickname ?? c.owner?.name ?? "",
-      visibility: c.visibility ?? "public",
-      defaultLocale: c.defaultLocale ?? "en",
-      locales: c.locales ?? [c.defaultLocale ?? "en"],
-      ...(c.baseCurrency ? { baseCurrency: c.baseCurrency } : {}),
-      ...(c.displayCurrencies ? { displayCurrencies: c.displayCurrencies } : {}),
-      ...(c.units ? { units: c.units } : {}),
-      ...(c.startLocation ? { startLocation: c.startLocation } : {}),
-    },
-  });
-  if (!made.ok) refuse(made, "POST /api/v1/journals");
-  note(`created the journal ${user}`);
-  console.log(
-    `\n  Give this to ${c.owner?.name ?? "them"}, now, in your reply — it signs them in once,\n` +
-    `  for 15 minutes, so they can see their own drafts:\n\n      ${made.body.signIn}\n\n` +
-    `  And this is the journal's agent token, good for seven days. Keep it out of any file\n` +
-    `  in this repository:\n\n      export FERNSCOUT_TOKEN=${made.body.token}\n`,
-  );
-  process.env.FERNSCOUT_TOKEN = made.body.token;
-  status = await call("GET", `/api/v1/${user}/status`);
+  const result = existing
+    ? await call("PATCH", path, { body: document, ifMatch: existing.etag })
+    : await call("PUT", path, { body: document });
+  if (!result.ok) return refuse(result, what);
+  say(`  ${existing ? "corrected    " : "created      "} ${what}`);
+  return result.body;
 }
-
-if (!status.ok) refuse(status, `GET /api/v1/${user}/status`);
-note(`journal ${user} exists — ${status.body?.trips?.length ?? "?"} trips already there`);
 
 /**
- * The journal's own settings, from config.json.
+ * The photographs a day names that the instance does not hold yet.
  *
- * Missed entirely until this was tested end to end: the folder is where a
- * person defines their journal, and the title, the languages and the
- * currencies in it were never sent anywhere. A trip would be created inside a
- * journal still called whatever the signup called it.
- *
- * Two calls, because the server refuses a body naming `features` alongside a
- * profile field — deliberately, so "turn mail off" cannot also rename the
- * journal by accident.
+ * Matched by the stored name, which — since the folder became a mirror — is
+ * the file's own content hash, so "already there" is a question about the
+ * bytes rather than about a filename somebody could reuse. That is what B1529
+ * was: the old route matched by basename, so a larger re-export of a
+ * photograph already sent under the same name was silently skipped, and the
+ * fix was 177 hand-driven deletes.
  */
-if (journal.config && changedIs("config.json")) {
-  /**
-   * Three fields of config.json have no door, and saying nothing about them
-   * is a lie of omission — B1504.
-   *
-   * The instance refuses `owner`, `baseCurrency` and `media` on purpose, each
-   * for a reason written beside it there, and all three refusals are right.
-   * What was wrong is what happened next: this script correctly declined to
-   * send them, every call it made succeeded, and the run reported success
-   * while the line the person had just corrected never reached the site. "It
-   * was accepted" is not the same claim as "it is there".
-   *
-   * Two different jobs, because the three fields are not equally knowable:
-   *
-   *   - **The scope line, every run, unconditional.** It names all three and
-   *     says they are never sent. This is what covers `owner.email`, which
-   *     `GET .../config` deliberately does not read back — a token that can
-   *     read a journal's config is not permission to collect its owner's
-   *     address — so a local edit to it cannot be detected at all. A warning
-   *     fired on a guess would fire on every honest journal, which is its own
-   *     way of being useless. A statement is not an alarm.
-   *   - **A named warning, only on a difference**, for `baseCurrency` and
-   *     `media`, both of which the instance does read back (the second since
-   *     B1504). A guard that fires on an honest run is a bug, so these say
-   *     nothing at all unless a compared value actually differs.
-   */
-  const noDoor = Object.keys(JOURNAL_NO_UPDATE_DOOR).filter((key) => journal.config[key] !== undefined);
-  if (noDoor.length) {
-    console.log(
-      `  note: ${noDoor.length === 1 ? "one field" : `${noDoor.length} fields`} of config.json ` +
-      `${noDoor.length === 1 ? "has" : "have"} no door and ${noDoor.length === 1 ? "was" : "were"} not sent:`,
-    );
-    for (const key of noDoor) console.log(`        ${key} — ${JOURNAL_NO_UPDATE_DOOR[key]}`);
-  }
-  const live = offline ? { ok: false } : await call("GET", `/api/v1/${user}/config`);
-  if (live.ok) {
-    for (const key of JOURNAL_COMPARABLE_NO_DOOR) {
-      const here = journal.config[key];
-      const there = live.body?.journal?.[key];
-      if (here === undefined || there === undefined) continue;
-      if (JSON.stringify(here) === JSON.stringify(there)) continue;
-      console.log(`  warn: ${key} here is ${JSON.stringify(here)}, the site is running ${JSON.stringify(there)}.`);
-      console.log(`        This run did not change it and no run can — ${JOURNAL_NO_UPDATE_DOOR[key]}`);
-    }
-  }
-
-  const profile = {};
-  // B1569 — this used to be nine keys written out by hand while the instance
-  // had eleven, so `ownerTel` and `travellers` were dropped in silence on
-  // every run. One list, shared with validate-content, the way
-  // `tripFields.mjs` already does it one level down.
-  for (const key of JOURNAL_UPDATE_DOORS) {
-    if (journal.config[key] !== undefined) profile[key] = journal.config[key];
-  }
-  // `ownerTel` is the one writable field that is not a top-level key of
-  // config.json — it is `owner.tel`, flattened by the API (B614).
-  if (profile.ownerTel === undefined && journal.config.owner?.tel !== undefined) {
-    profile.ownerTel = journal.config.owner.tel;
-  }
-  if (Object.keys(profile).length) {
-    note(`  ${step(`set the journal's own fields — ${Object.keys(profile).join(", ")}`)}`);
-    if (!dry) {
-      const patched = await call("PATCH", `/api/v1/${user}/config`, { body: profile });
-      if (!patched.ok) refuse(patched, `PATCH /api/v1/${user}/config`);
-    }
-  }
-  const features = Object.fromEntries(
-    Object.entries(journal.config.features ?? {})
-      .filter(([, value]) => value && typeof value.enabled === "boolean")
-      .map(([name, value]) => [name, value.enabled]),
-  );
-  const requestedFeatureKeys = Object.keys(features);
-  if (requestedFeatureKeys.length) {
-    if (dry) {
-      note(`  ${step(`set features — ${Object.entries(features).map(([k, v]) => `${k}=${v}`).join(", ")}`)}`);
-    } else {
-      const patched = await call("PATCH", `/api/v1/${user}/config`, { body: { features } });
-      // A capability this server cannot offer is refused, and that is a fact
-      // about the server rather than a mistake in the folder: say it and go on.
-      if (!patched.ok) {
-        console.log(`      note: ${patched.body?.error ?? patched.status} — ${patched.body?.message ?? "features left as they were"}`);
-      } else {
-        // Print the server's own note verbatim (B1400) — it, not this
-        // script, knows which keys actually got written, and duplicating
-        // that wording here is the two-places-disagree problem. The note
-        // alone does not name *which* requested keys were left unapplied,
-        // so call those out separately.
-        const changedKeys = new Set(patched.body?.changed ?? []);
-        const unapplied = requestedFeatureKeys.filter((key) => !changedKeys.has(key));
-        note(`  ${step("set features")} — ${patched.body?.note ?? `changed: ${[...changedKeys].join(", ") || "none"}`}`);
-        if (unapplied.length) {
-          note(`      not applied: ${unapplied.join(", ")}`);
-        }
-      }
-    }
-  }
+function pendingMedia(day, remote) {
+  const held = new Set((remote?.media ?? []).map((item) => item.src));
+  return (day.media ?? []).filter((item) => !held.has(item.src));
 }
 
-// ── 3. each trip ───────────────────────────────────────────────────────────
-const remote = await call("GET", `/api/v1/${user}/trips`);
-if (!remote.ok) refuse(remote, `GET /api/v1/${user}/trips`);
-const existing = new Set((remote.body?.trips ?? []).map((t) => t.id));
+async function uploadMedia(tripId, daySlug, item, maxBytes) {
+  const file = mediaFile(journal, item.src);
+  if (!file || !existsSync(file)) {
+    say(`  ✗ ${item.src} is named by the day and is not on disk`);
+    refused += 1;
+    return;
+  }
+  const bytes = statSync(file).size;
+  if (maxBytes && bytes > maxBytes) {
+    say(`  ✗ ${basename(file)} is ${bytes} bytes and this server takes ${maxBytes}`);
+    refused += 1;
+    return;
+  }
+  if (dry) { say(`  would upload   ${item.src}`); return; }
 
+  // `intent.day` attaches the photograph to the day *and* clears a
+  // `declined.media` on it in the same call, so no follow-up correction is
+  // needed — one of the few places v2 does more than it was asked and is right
+  // to. The caption is asked-or-declined like everything else: a photograph
+  // published without one says so rather than being given words nobody wrote.
+  const form = new FormData();
+  form.set("file", new Blob([readFileSync(file)]), basename(file));
+  form.set("intent", JSON.stringify({
+    kind: "photo",
+    trip: tripId,
+    day: daySlug,
+    ...(item.caption
+      ? { caption: item.caption }
+      : { declined: { caption: "this photograph was published without a caption" } }),
+  }));
+  const result = await call("POST", `/api/v2/${user}/media`, { body: form });
+  if (!result.ok) { refuse(result, `upload ${item.src}`); return; }
+  say(`  uploaded       ${item.src}`);
+}
+
+// ── the journal itself ─────────────────────────────────────────────────────
+say(`${SITE}  ←  content/${user}`);
+if (dry) say("(dry run — nothing is written)");
+
+const { limits: serverLimits } = await limits().catch(() => ({ limits: {} }));
+const perDay = serverLimits.itemsPerDay;
+const maxImageBytes = serverLimits.imageMaxBytes;
+if (perDay) say(`this server takes ${perDay} photographs per day`);
+
+const existingJournal = await fetchDoc(`/api/v2/${user}`);
+if (!existingJournal) {
+  die(
+    `\nNo journal called "${user}" on ${SITE}, and this tool does not create one: ` +
+    "POST /api/v2/journals spends a signup token, which is a person's decision and an " +
+    "email address they own. Make it first, then run this again.",
+  );
+}
+
+// ── the figure library ─────────────────────────────────────────────────────
+// Journal-wide since v2 (at most ten), and referenced by a trip rather than
+// described inside it. They go first: a trip naming a figure that does not
+// exist yet is refused.
+if (journal.figures.length) say("\nfigures");
+for (const figure of journal.figures) {
+  if (!figure.document) { say(`  ✗ figures/${figure.id}.json: ${figure.problem}`); refused += 1; continue; }
+  await send(`/api/v2/${user}/figures/${figure.id}`, figure.document, `figure ${figure.id}`);
+}
+
+// ── the trips ──────────────────────────────────────────────────────────────
 for (const trip of journal.trips) {
-  if (only && trip.id !== only) continue;
-  // A trip nothing under it changed — but only once it exists on the site.
-  // A trip that is not there yet has to be created whatever the diff says,
-  // because "unchanged since the last sync" and "the site has it" are
-  // different questions and there has never been a last sync for this one.
-  if (changed && existing.has(trip.id) && !changedUnder(`trips/${trip.id}/`)) continue;
-  const data = trip.trip?.data ?? {};
-  console.log(`\n── ${trip.id}`);
+  if (onlyTrip && trip.id !== onlyTrip) continue;
+  say(`\n${trip.id}`);
+  if (!trip.trip) { say("  ✗ no trip.json — nothing to send"); refused += 1; continue; }
+  if (!trip.trip.document) { say(`  ✗ trip.json: ${trip.trip.problem}`); refused += 1; continue; }
 
-  if (!existing.has(trip.id)) {
-    // Everything trip.md carries, in one call. The body is the intro.
-    const body = { id: trip.id, title: data.title, start: data.start, end: data.end };
-    for (const key of ["tagline", "status", "accent", "visibility", "listed", "teaser",
-                       "costsVisibility", "test", "people", "travellers", "rates", "tracks",
-                       "translations"]) {
-      if (data[key] !== undefined && data[key] !== null) body[key] = data[key];
-    }
-    if (trip.trip?.body) body.intro = trip.trip.body;
-    note(`  ${step("create the trip")}`);
-    if (!dry) {
-      const made = await call("POST", `/api/v1/${user}/trips`, { body });
-      if (!made.ok) refuse(made, `POST /api/v1/${user}/trips (${trip.id})`);
-    }
-  } else {
-    note("  trip is already there");
-    // The one-field doors, for a trip that existed before this run.
-    // B1518: `teaser` rides the same door as visibility and listed, and was
-    // missing from both this list and the create call above — so a trip.md
-    // asking for a locked card on /<user>/trips was accepted by validate,
-    // published without a word, and never appeared. A field these tools drop
-    // in silence is worse than one they refuse.
-    // Everything from here to the end of this block is read out of `trip.md`,
-    // so a run narrowed by `--changed` skips the lot when that file did not
-    // move: re-`PATCH`ing a trip's visibility, rates and party to correct one
-    // day is exactly the waste the narrowing exists to stop. It also repairs
-    // a regression the narrowing itself caused — `cover:` is resolved through
-    // the days' real slugs, which a narrowed run has not learned, so the
-    // cover step warned "that day's slug is not known" on every run. A trip
-    // whose `trip.md` is unchanged has an unchanged `cover:`, and there was
-    // never anything to send.
-    if (changedIs(`trips/${trip.id}/trip.md`) &&
-        (data.visibility !== undefined || data.listed !== undefined || data.teaser !== undefined)) {
-      const body = {};
-      if (data.visibility !== undefined) body.visibility = data.visibility;
-      if (data.listed !== undefined) body.listed = data.listed;
-      if (data.teaser !== undefined) body.teaser = data.teaser;
-      note(`  ${step(`set visibility ${JSON.stringify(body)}`)}`);
-      if (!dry) {
-        const patched = await call("PATCH", `/api/v1/${user}/trips/${trip.id}/visibility`, { body });
-        if (!patched.ok) refuse(patched, `PATCH …/${trip.id}/visibility`);
-      }
-    }
-    if (changedIs(`trips/${trip.id}/trip.md`) && data.rates && Object.keys(data.rates).length) {
-      note(`  ${step("set the trip's rates")}`);
-      if (!dry) {
-        const patched = await call("PATCH", `/api/v1/${user}/trips/${trip.id}/rates`, { body: { rates: data.rates } });
-        if (!patched.ok) refuse(patched, `PATCH …/${trip.id}/rates`);
-      }
-    }
-    // B524 built three more doors for a trip that already exists — people,
-    // travellers, tracks — and this used to walk through none of them: an
-    // edited trip.md said nothing had changed as long as the trip itself was
-    // already there. "trip is already there" is not "trip.md has nothing left
-    // to send".
-    if (changedIs(`trips/${trip.id}/trip.md`) && data.people && data.people.length) {
-      note(`  ${step("set the trip's people")}`);
-      if (!dry) {
-        const patched = await call("PATCH", `/api/v1/${user}/trips/${trip.id}/people`, { body: { people: data.people } });
-        if (!patched.ok) refuse(patched, `PATCH …/${trip.id}/people`);
-      }
-    }
-    if (changedIs(`trips/${trip.id}/trip.md`) && data.travellers && data.travellers.length) {
-      note(`  ${step("set the trip's travellers")}`);
-      if (!dry) {
-        const patched = await call("PATCH", `/api/v1/${user}/trips/${trip.id}/travellers`, { body: { travellers: data.travellers } });
-        if (!patched.ok) refuse(patched, `PATCH …/${trip.id}/travellers`);
-      }
-    }
-    if (changedIs(`trips/${trip.id}/trip.md`) && data.tracks && Object.keys(data.tracks).length) {
-      note(`  ${step("set what the trip tracks")}`);
-      if (!dry) {
-        const patched = await call("PATCH", `/api/v1/${user}/trips/${trip.id}/tracks`, { body: { tracks: data.tracks } });
-        if (!patched.ok) refuse(patched, `PATCH …/${trip.id}/tracks`);
-      }
-    }
-
-    // B1525/B245: these nine fields of an existing trip had no door until
-    // B622 (four), B245 (`cover`), B907 (`accent`, `costsVisibility`,
-    // `intro`) and B1496 (`translations`) — see PATCH .../trips/{trip} in
-    // the fernscout repo's openapi.ts. `cover` is the one exception: its
-    // value has to be a `src` the trip's gallery already carries, so it is
-    // sent later, once the day loop below has actually uploaded the
-    // photographs and knows each day's real slug (see the "cover" step at
-    // the end of the trip block).
-    const detail = offline || !changedIs(`trips/${trip.id}/trip.md`)
-      ? { ok: false, skipped: true }
-      : await call("GET", `/api/v1/${user}/trips/${trip.id}`);
-    if (detail.ok) {
-      const live = detail.body ?? {};
-      const patchBody = {};
-      for (const key of TRIP_GENERAL_PATCH_KEYS) {
-        if (data[key] === undefined || data[key] === null) continue;
-        if (JSON.stringify(data[key]) !== JSON.stringify(live[key])) patchBody[key] = data[key];
-      }
-      if (trip.trip?.body && trip.trip.body !== (live.intro ?? "")) patchBody.intro = trip.trip.body;
-      if (Object.keys(patchBody).length) {
-        note(`  ${step(`set ${Object.keys(patchBody).join(", ")}`)}`);
-        if (!dry) {
-          const patched = await call("PATCH", `/api/v1/${user}/trips/${trip.id}`, { body: patchBody });
-          if (!patched.ok) refuse(patched, `PATCH /api/v1/${user}/trips/${trip.id}`);
-        }
-      }
-    } else if (!offline && !detail.skipped) {
-      // `skipped` is a narrowed run that never asked, which is not a failure
-      // to read the trip back and must not be reported as one.
-      console.log(`      note: could not read the trip back to check ${TRIP_GENERAL_PATCH_KEYS.join("/")}/intro (${detail.status})`);
-    }
-  }
-
-  // ── the budget and the costs paid before leaving ─────────────────────────
-  if (trip.costs && changedIs(`trips/${trip.id}/costs.md`)) {
-    const body = {};
-    if (trip.costs.data.budget) body.budget = trip.costs.data.budget;
-    if (trip.costs.data.costs) body.costs = trip.costs.data.costs;
-    if (trip.costs.body) body.body = trip.costs.body;
-    note(`  ${step(`put costs.md — ${body.costs?.length ?? 0} lines${body.budget ? " and a budget" : ""}`)}`);
-    if (!dry) {
-      const put = await call("PUT", `/api/v1/${user}/trips/${trip.id}/costs`, { body });
-      if (!put.ok) refuse(put, `PUT …/${trip.id}/costs`);
-    }
-  }
-
-  // ── the days ─────────────────────────────────────────────────────────────
-  //
-  // **The slug is the server's to choose, not the filename's.** It is made
-  // from the title, and a file called `2026-03-01-tag-eins.md` whose title is
-  // "Abfahrt in Basel" becomes `abfahrt-in-basel`. Assuming otherwise sent the
-  // photographs to a day that did not exist, and — worse, on a second run —
-  // would have written every day again under the name it expected.
-  //
-  // So: find the day the instance already has, and take the slug from the
-  // answer. Three ways, tried in order of how sure they are — B578, after a
-  // retitled day was found "new" by the second of these, which then hit the
-  // idempotency key from its first write and stopped the whole run on a 409
-  // whose message was about a key, not about a day that just needed updating:
-  //
-  //   1. the slug this same script recorded into the file the last time it
-  //      wrote this day (see `recordSlug` above) — exact, and survives any
-  //      retitle or rename, because it does not depend on either.
-  //   2. date + title, unchanged since the day was last sent — exact, and the
-  //      only test this file used before B578.
-  //   3. date alone, when exactly one remote day shares it — a guess, made
-  //      only when the first two have nothing, and named as a guess in what
-  //      this prints. Two days sharing a date are left alone rather than
-  //      guessed at; a genuinely new day on a date that already has one is
-  //      still created.
-  // A trip about to be created in this same run cannot have any days on the
-  // instance yet, so a 404 here is the empty list that plan needs rather than
-  // a refusal — the same reasoning `refuse()` already gets for a trip that
-  // exists, just not yet for one that does not. `--offline` skips the request
-  // outright, matching the two other places this file already does that.
-  const isNewTrip = !existing.has(trip.id);
-  const listed = offline ? { ok: false } : await call("GET", `/api/v1/${user}/trips/${trip.id}/days`);
-  let days;
-  if (listed.ok) days = listed.body?.days ?? listed.body?.entries ?? [];
-  else if (offline || (isNewTrip && listed.status === 404)) days = [];
-  else refuse(listed, `GET …/${trip.id}/days`);
-  const bySlug = new Map(days.map((d) => [d.slug, d]));
-  const byTitleDate = new Map(days.map((d) => [`${d.date}|${d.title}`, d]));
-  const byDate = new Map();
-  for (const d of days) {
-    if (!byDate.has(d.date)) byDate.set(d.date, []);
-    byDate.get(d.date).push(d);
-  }
-  // A remote day matched once by any of the three ways below is not offered
-  // to a second local file in the same run — otherwise a genuinely new day
-  // sharing a date with one already claimed by the date-only guess would be
-  // "matched" onto it too, and never created at all.
-  const claimed = new Set();
-  // The date-alone guess below is only sound when the *local* side is just as
-  // unambiguous as the remote side it already checks — B647: a Friday split
-  // into two local entries, matched against one remote day sharing that date,
-  // let the first entry processed win the date-alone branch and overwrite the
-  // other Friday's content. Counting local entries per date the same way
-  // `byDate` counts remote ones is the other half of the invariant the
-  // comment above states.
-  const localByDate = new Map();
-  for (const e of trip.entries) {
-    const d = e.data.date ?? e.fileDate;
-    localByDate.set(d, (localByDate.get(d) ?? 0) + 1);
-  }
-  // B1525 — `cover:` in trip.md names a photo in *local* terms
-  // (`/media/<trip>/<local-folder>/<file>`, the folder the export wrote), and
-  // the instance's own gallery src is built from the day's *slug*
-  // (`/<user>/media/<trip>/<day-slug>/<file>`), which comes from the title
-  // and has no reason to agree with the local folder name. Filled in below,
-  // once each entry's real slug is known, so cover can be translated rather
-  // than sent verbatim.
-  const slugByFile = new Map();
+  const tripPath = `/api/v2/${user}/trips/${trip.id}`;
+  if (!await send(tripPath, trip.trip.document, `trip ${trip.id}`)) continue;
 
   for (const entry of trip.entries) {
-    // The day's own markdown, or any photograph it carries. A caption edited
-    // in the frontmatter is the first of those; a re-exported photograph
-    // under the same name is the second, and neither is visible from the
-    // other.
-    if (changed && !changed.has(`trips/${trip.id}/entries/${entry.file}`)) {
-      const photographs = (entry.data.gallery ?? [])
-        .map((item) => galleryFile(journal, trip, item.src))
-        .filter(Boolean)
-        .map((file) => relative(journal.dir, file).split(sep).join("/"));
-      if (!photographs.some((path) => changed.has(path))) continue;
-    }
-    const date = entry.data.date ?? entry.fileDate;
-    const body = { title: entry.data.title, date, content: entry.body };
-    // B1569 — one list, shared with validate-content, which warns when
-    // content-model.json knows a day key neither it nor DAY_DEDICATED_DOORS
-    // accounts for. This was the least protected of the helper's key lists
-    // and the one a new field is most likely to land in.
-    for (const key of DAY_UPDATE_DOORS) {
-      if (entry.data[key] !== undefined && entry.data[key] !== null) body[key] = entry.data[key];
-    }
-    // A reading this server looked up itself is written into the file with
-    // `source: "open-meteo"`, and sending it back is refused — only the
-    // server may claim that name. Forwarding every weatherData found would
-    // therefore fail on every day the archive has ever answered for. Said out
-    // loud rather than dropped quietly: the value is not lost, it is simply
-    // the instance's to re-derive. B1578.
-    if (isServerWeather(body.weatherData, reservedWeatherSources)) {
-      delete body.weatherData;
-      note(`  ${step(`skip ${entry.file}'s weather — it is this server's own lookup, not a reading to re-send`)}`);
-      if (!reservedWeatherSources.length && !saidFallback) {
-        // Once per run, not once per day: it is a fact about the instance,
-        // and a fourteen-day trip would otherwise print it fourteen times.
-        saidFallback = true;
-        console.log(
-          `      note: this instance does not publish weather.reservedSources, so that was ` +
-          `judged against ${FALLBACK_RESERVED_WEATHER_SOURCES.join(", ")} rather than its own answer.`,
-        );
-      }
-    }
-    // `weather` never lives in the file — it is an instruction to the
-    // server, not content, which is exactly what `never-in-file` means in
-    // <site>/content-model.json — so it is not in the key list above. `--weather`
-    // supplies it here instead, and only for a day the archive can actually
-    // answer: no lat/lng, no request, never a guess standing in for one.
-    if (sendWeather && body.lat !== undefined && body.lng !== undefined) body.weather = true;
-    // The two answers that are not values. On disk they are their own lines;
-    // over the API they are the field itself, which is what makes them
-    // findable — a caller stuck on `costs` reads about `costs`.
-    //
-    //   without:    [costs]  →  "costs": false      there was none
-    //   unrecorded: [costs]  →  "costs": "unknown"  there was some and it is gone
-    //
-    // Sending the wrong one writes a false statement into somebody's journal,
-    // so they are mapped separately rather than folded together. B560.
-    //
-    // B597: `without: false` is not the same promise for every field.
-    // openapi.json's `Draft` schema says so in words for two of them —
-    // `photos` ("`false`, and only on create — this day has no photographs")
-    // and `coordinates` ("`false`, and only on create — this day has no one
-    // place to put on a map") — and `DayEdit`'s editable-field list leaves
-    // both out entirely, so PATCH refuses either with 400 unsupported_field.
-    // `costs` carries no such restriction: its `false` is on both schemas,
-    // because a day whose costs were recorded and later found to be none has
-    // to be able to say so after the fact — so it still goes straight onto
-    // `body` and is sent whichever call this turns out to be.
-    //
-    // The guard below is on the *field*, not on the answer or on `without` as
-    // a whole: only `photos` and `coordinates` are held back, into their own
-    // bucket, added to the body only where the day is being created.
-    // `unrecorded: → "unknown"` is not documented as create-only at all —
-    // PATCH refuses it for these same two fields only because the route's
-    // editable list omits them altogether, which is B599, a separate ticket.
-    // This set should narrow to nothing once B599 lands and the route
-    // accepts `photos`/`coordinates` on an update.
-    const CREATE_ONLY_FALSE = new Set(["photos", "coordinates"]);
-    const createOnlyFalse = {};
-    for (const track of entry.data.without ?? []) {
-      if (CREATE_ONLY_FALSE.has(track)) createOnlyFalse[track] = false;
-      else body[track] = false;
-    }
-    for (const track of entry.data.unrecorded ?? []) body[track] = "unknown";
+    if (!entry.document) { say(`  ✗ ${entry.file}: ${entry.problem}`); refused += 1; continue; }
+    const dayPath = `${tripPath}/days/${entry.slug}`;
+    const remote = await fetchDoc(dayPath);
+    // The slug is the filename on disk and the address on the wire; the
+    // document itself never carries a second copy of it.
+    const day = { ...entry.document, slug: entry.slug };
 
-    const recorded = typeof entry.data.slug === "string" ? entry.data.slug : null;
-    let existing = null;
-    let how = null;
-    if (recorded && bySlug.has(recorded) && !claimed.has(recorded)) {
-      existing = bySlug.get(recorded);
-      if (existing.title !== entry.data.title || existing.date !== date) {
-        how = `by its recorded slug "${recorded}" — its title or date on the instance ` +
-          `no longer match this file, which is exactly the edit this match is meant to survive`;
-      }
-    }
-    if (!existing) {
-      const byTD = byTitleDate.get(`${date}|${entry.data.title}`);
-      if (byTD && !claimed.has(byTD.slug)) existing = byTD;
-    }
-    // A guess, made only when *both* sides agree there is nothing else it
-    // could be: one remote day on this date, and — since B647 — exactly one
-    // local entry on it too. Two local entries sharing a date make the guess
-    // provably ambiguous (which one is "the" day on that date?), so both are
-    // left to be created instead, however many remote days share the date.
-    let guessed = false;
-    if (!existing) {
-      const sameDate = (byDate.get(date) ?? []).filter((d) => !claimed.has(d.slug));
-      if (sameDate.length === 1 && localByDate.get(date) === 1) {
-        existing = sameDate[0];
-        guessed = true;
-        how = `loosely, by date alone (${date}) — neither its recorded slug nor its title ` +
-          `matched, and this was the only day the instance has on that date`;
-      }
-    }
-    let slug = existing?.slug ?? null;
-    if (slug) claimed.add(slug);
-    if (how) console.log(`  ⚠ matched ${slug} ${how}`);
-
-    const weatherNote = body.weather ? " + ask the archive for the weather" : "";
-    if (!slug) {
-      note(`  ${step(`write ${entry.file}${weatherNote}`)}`);
-      if (dry) slug = entry.slug;
-      else {
-        const made = await call("POST", `/api/v1/${user}/trips/${trip.id}/days`, {
-          body: { ...body, ...createOnlyFalse, idempotency_key: `${trip.id}:${entry.slug}` },
-        });
-        if (made.ok) {
-          slug = made.body.slug;
-          claimed.add(slug);
-          note(`      → ${slug}`);
-        } else if (made.status === 409 && made.body?.error === "idempotency_key_reused") {
-          // Not really a refusal — a caller reading "idempotency_key_reused"
-          // has no reason to think of a day at all, and the actual cause here
-          // is almost always this file's title having changed since the day
-          // was first written: the matches above missed it (no recorded slug
-          // yet, and more than one day shares its date), so it looked new,
-          // and its idempotency key is the one its *old* title produced.
-          // B578. The server's own refusal names the slug that key already
-          // belongs to, so the day is not lost — update it there instead of
-          // failing the whole run over what is really a match this script
-          // could not make on its own.
-          const recovered = String(made.body?.message ?? "").match(/created "([^"]+)"/)?.[1];
-          if (!recovered) {
-            refuse(made,
-              `POST …/days (${entry.file}) — this day already exists under a different title, ` +
-              "but its slug could not be read out of the refusal, so nothing more could be done.");
-          }
-          console.log(
-            `  ⚠ this is not a new day: the instance already holds it as "${recovered}", under a title ` +
-            "this file no longer carries. Updating it there instead of writing a second day.",
-          );
-          note(`  ${step(`update ${recovered}`)}`);
-          const patched = await call("PATCH", `/api/v1/${user}/trips/${trip.id}/days/${recovered}`, { body });
-          if (!patched.ok) refuse(patched, `PATCH …/days/${recovered}`);
-          slug = recovered;
-          claimed.add(slug);
-        } else {
-          refuse(made, `POST …/days (${entry.file})`);
-        }
-      }
+    if (dry) {
+      say(`  ${remote ? "would correct " : "would create  "} day ${entry.slug}`);
     } else {
-      note(`  ${step(`update ${slug}${weatherNote}`)}`);
-      if (!dry) {
-        const patched = await call("PATCH", `/api/v1/${user}/trips/${trip.id}/days/${slug}`, { body });
-        if (!patched.ok) refuse(patched, `PATCH …/days/${slug}`);
-      }
-    }
-    // Never record a slug this run only guessed at — writing it back turns
-    // one wrong match into a permanent one, repeated on every future run.
-    if (!dry && slug && !guessed) recordSlug(entry, slug);
-    if (slug) slugByFile.set(entry.file, slug);
-
-    // ── the photographs ────────────────────────────────────────────────────
-    // The instance's own gallery is the record of what has been sent, so a
-    // second run uploads nothing rather than duplicating everything. No local
-    // state file to go stale.
-    //
-    // A dry run asks this too, unless told not to: it is the same call the
-    // real run is about to make (the day either already existed, or `slug`
-    // just came back from creating it above), and skipping it is how a dry
-    // run once reported "would send 75 files" for a day that already held 60
-    // of them — every gallery item counted as pending because nobody had
-    // asked. `--offline` keeps the old no-network behaviour, and says so.
-    const there = offline ? { ok: false } : await call("GET", `/api/v1/${user}/trips/${trip.id}/days/${slug}`);
-
-    // B597: a `photos`/`coordinates` `false` held back from an update (above)
-    // is not silently re-sendable, so a file edited to add `without: [photos]`
-    // after the day was first created — one that never got `photos: false` at
-    // the time — cannot be corrected by this run. That is not nothing: say it,
-    // the same way B572 flags a trip field with no door of its own, rather
-    // than let the instance quietly keep disagreeing with the file.
-    if (there.ok) {
-      const remoteWithout = new Set(there.body?.without ?? []);
-      const remoteUnrecorded = new Set(there.body?.unrecorded ?? []);
-      const disagreeing = [...CREATE_ONLY_FALSE]
-        .filter((track) => (entry.data.without ?? []).includes(track))
-        .filter((track) => !remoteWithout.has(track) && !remoteUnrecorded.has(track));
-      if (disagreeing.length) {
-        console.log(
-          `  ⚠ ${slug}: this file's without: names ${disagreeing.join(", ")}, but the instance was ` +
-          `not told that at creation and there is no call left that can set ${disagreeing.length === 1 ? "it" : "them"} now ` +
-          "(false is create-only for these fields, per openapi.json). Fix it on the instance by hand for now.",
-        );
-      }
-    }
-    const gallery = (there.ok ? (there.body?.entry?.gallery ?? there.body?.gallery) : null) ?? [];
-    const remoteByBasename = new Map(gallery.map((item) => [basename(String(item.src ?? "")), item]));
-    const local = (entry.data.gallery ?? [])
-      .map((item) => ({ item, file: galleryFile(journal, trip, item.src) }))
-      .filter(({ item, file }) => file && !String(item.src).startsWith("http"));
-
-    if (replaceMedia) {
-      // Delete first, by the remote's own `src` — never the local one, which
-      // is in local terms and may not even resemble what the instance holds.
-      const toReplace = local
-        .filter(({ file }) => remoteByBasename.has(basename(file)))
-        .map(({ file }) => remoteByBasename.get(basename(file)).src);
-      if (toReplace.length) {
-        note(`  ${step(`replace ${toReplace.length} photograph${toReplace.length === 1 ? "" : "s"} on ${slug}`)}`);
-        if (!dry) {
-          const deleted = await call("DELETE", `/api/v1/${user}/trips/${trip.id}/media`, {
-            body: { day: slug, src: toReplace },
-          });
-          if (!deleted.ok) refuse(deleted, `DELETE …/media (${slug})`);
-          for (const src of toReplace) remoteByBasename.delete(basename(src));
-        } else {
-          for (const src of toReplace) remoteByBasename.delete(basename(src));
-        }
-      }
-    }
-    const pending = gallery.length >= 40
-      ? (local.length > gallery.length && note(`  note: ${local.length - gallery.length} local photos remain; ${slug} already has the server maximum of 40`), [])
-      : local.filter(({ file }) => !remoteByBasename.has(basename(file)));
-
-    if (pending.length) {
-      // The instance's own whole-request ceiling, from /api/health, with a
-      // little room left: this is the limit a batch of phone originals meets
-      // first, and it was a guess in this file until the server published it.
-      const LIMIT = Math.floor((LIMITS.requestMaxBytes ?? 64 * 1024 * 1024) * 0.6);
-      let batch = [], size = 0;
-      const batches = [];
-      for (const one of pending) {
-        const bytes = statSync(one.file).size;
-        if (batch.length >= 40 || (batch.length && size + bytes > LIMIT)) { batches.push(batch); batch = []; size = 0; }
-        batch.push(one); size += bytes;
-      }
-      if (batch.length) batches.push(batch);
-
-      note(`  ${step(`send ${pending.length} file${pending.length === 1 ? "" : "s"} for ${slug}`)}` +
-           (batches.length > 1 ? ` in ${batches.length} batches` : "") +
-           (offline ? " (offline — not checked against the site, so this may be too high)" : ""));
-      if (!dry) {
-        for (const group of batches) {
-          const form = new FormData();
-          form.set("day", slug);
-          for (const { item, file } of group) {
-            form.append("files", new Blob([readFileSync(file)]), basename(file));
-            form.append("captions", item.caption ?? "");
-          }
-          const sent = await call("POST", `/api/v1/${user}/trips/${trip.id}/media`, { body: form });
-          if (!sent.ok) refuse(sent, `POST …/media (${slug})`);
-        }
-      }
+      const result = remote
+        ? await call("PATCH", dayPath, { body: day, ifMatch: remote.etag })
+        : await call("PUT", dayPath, { body: day });
+      if (!result.ok) { refuse(result, `day ${entry.slug}`); continue; }
+      say(`  ${remote ? "corrected    " : "created      "} day ${entry.slug}`);
     }
 
-    // ── on the site ────────────────────────────────────────────────────────
-    if (!draftsOnly) {
-      note(`  ${step(`publish ${slug}`)}`);
-      if (!dry) {
-        const live = await call("POST", `/api/v1/${user}/trips/${trip.id}/days/${slug}/publish`);
-        // Already published is not a failure — this run is meant to be repeatable.
-        if (!live.ok && live.status !== 409) refuse(live, `POST …/days/${slug}/publish`);
-      }
+    const pending = pendingMedia(entry.document, remote?.doc);
+    if (perDay && (remote?.doc?.media?.length ?? 0) + pending.length > perDay) {
+      say(`  ✗ day ${entry.slug} would hold more than this server's ${perDay} photographs — none were uploaded for it`);
+      refused += 1;
+      continue;
     }
-  }
+    for (const item of pending) await uploadMedia(trip.id, entry.slug, item, maxImageBytes);
 
-  // ── cover ──────────────────────────────────────────────────────────────
-  // B1525/B245: last of the nine trip fields, and the one that cannot go
-  // out with the others above — its value has to be a `src` the trip's
-  // gallery already carries, which only exists once the loop above has run.
-  // `cover:` in trip.md is local (`/media/<trip>/<local-folder>/<file>`,
-  // named for wherever the export put the day's photos); the instance's src
-  // is `/<user>/media/<trip>/<day-slug>/<file>`, named for the day's title.
-  // The two folder names have no reason to agree, so this looks up which
-  // entry actually carries that local file and re-addresses it under that
-  // entry's real slug rather than sending the local value verbatim.
-  if (data.cover && changedIs(`trips/${trip.id}/trip.md`)) {
-    const match = String(data.cover).match(/^\/media\/([^/]+)\/(.+)$/);
-    const owner = match && trip.entries.find((e) =>
-      (e.data.gallery ?? []).some((item) => item.src === data.cover));
-    if (!match) {
-      console.log(`  ⚠ cover ${JSON.stringify(data.cover)} is not a /media/<trip>/<folder>/<file> path — not sent`);
-    } else if (!owner) {
-      console.log(`  ⚠ cover ${data.cover} names no photograph in any of this trip's days — not sent`);
-    } else {
-      const slug = slugByFile.get(owner.file);
-      const basename = match[2].split("/").pop();
-      const resolvedCover = slug ? `/${user}/media/${trip.id}/${slug}/${basename}` : null;
-      if (!resolvedCover) {
-        console.log(`  ⚠ cover ${data.cover} belongs to ${owner.file}, but that day's slug is not known — not sent`);
-      } else {
-        const detail = offline ? { ok: false } : await call("GET", `/api/v1/${user}/trips/${trip.id}`);
-        if (!offline && detail.ok && detail.body?.cover === resolvedCover) {
-          // already set, nothing to do
-        } else {
-          note(`  ${step(`set cover — ${data.cover} → ${resolvedCover}`)}`);
-          if (!dry) {
-            const patched = await call("PATCH", `/api/v1/${user}/trips/${trip.id}`, { body: { cover: resolvedCover } });
-            if (!patched.ok) refuse(patched, `PATCH /api/v1/${user}/trips/${trip.id} (cover)`);
-          }
-        }
-      }
-    }
+    // Publishing is the separate call it has always been, and the person has
+    // already said the word for this whole run (the skill's own procedure; see
+    // AGENTS.md). A day the instance already has on the site is left alone
+    // rather than published twice.
+    if (draftsOnly || remote?.doc?.status === "published") continue;
+    if (dry) { say(`  would publish  day ${entry.slug}`); continue; }
+    const published = await call("POST", `${dayPath}/publish`, { body: {} });
+    if (!published.ok) { refuse(published, `publish ${entry.slug}`); continue; }
+    say(`  published      day ${entry.slug}`);
   }
 }
 
-console.log(
-  `\n${dry ? "Dry run — nothing was sent." : `Done. ${did.length} steps.`}` +
-  (draftsOnly ? "\nThe days are drafts. Publish them with a run without --drafts." : "") +
-  `\n${SITE}/${user}`,
-);
+say("");
+if (refused) {
+  say(
+    `${refused} thing(s) were refused. Nothing was invented to get past a refusal — ` +
+    "read what the server said above and fix the folder.",
+  );
+  process.exit(1);
+}
+say(dry ? "That is the plan. Nothing was written." : "Done.");
