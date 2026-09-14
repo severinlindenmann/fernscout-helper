@@ -213,7 +213,28 @@ export async function call(method, path, { body, headers = {}, auth = true, ifMa
   const text = await response.text();
   let parsed = null;
   try { parsed = text ? JSON.parse(text) : null; } catch { parsed = { raw: text.slice(0, 400) }; }
-  return { status: response.status, ok: response.ok, body: parsed, etag: response.headers.get("etag") };
+  return { status: response.status, ok: response.ok, body: parsed, etag: etagOf(response) };
+}
+
+/**
+ * The ETag as the origin computed it — fernscout B1729.
+ *
+ * Caddy's `encode` appends `-gzip` to the ETag of anything it compresses, and
+ * `fetch` sends `accept-encoding: gzip` on every request. So the value read
+ * back is not the value the origin compares `If-Match` against, and every
+ * conditional write answers `409 stale_document` — on a document nobody else
+ * has touched, with a message that says confidently that somebody has. Six
+ * days of the demo journal reported as conflicts is how this was found.
+ *
+ * Stripping the suffix here is a workaround and is marked as one: the fix is
+ * on the instance, and this comes out when B1729 lands. It is safe in the
+ * meantime because the prefix is exactly what the origin issued — the suffix
+ * is added by the proxy, after.
+ */
+function etagOf(response) {
+  const etag = response.headers.get("etag");
+  if (!etag) return null;
+  return etag.replace(/-(gzip|br|zstd|deflate)("?)$/, "$2");
 }
 
 /**
