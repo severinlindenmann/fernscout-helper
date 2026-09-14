@@ -5,6 +5,7 @@
 //   node publish.mjs --user severin --trip algarve-2026
 //   node publish.mjs --user severin --dry-run       say what it would do
 //   node publish.mjs --user severin --drafts        write the days, do not publish them
+//   node publish.mjs --user severin --changed <file> only what a sync says differs
 //
 // **This is a much smaller program than it was, and that is the point.** v1
 // had a door per field — `PATCH .../visibility`, `.../rates`, `.../people`,
@@ -44,6 +45,19 @@ const user = arg("user");
 const onlyTrip = arg("trip");
 const dry = has("dry-run");
 const draftsOnly = has("drafts");
+
+/**
+ * `--changed` — the paths a sync worked out actually differ, so a correction
+ * to one day does not re-send the other thirteen.
+ *
+ * Written by `sync.mjs`, which is the only thing that knows it: publish
+ * compares a folder with an instance and has no memory of what either side
+ * looked like last time, while a sync keeps exactly that. Absent means
+ * everything, which is what a plain run has always meant.
+ */
+const changedFile = arg("changed");
+const changed = changedFile ? new Set(JSON.parse(readFileSync(changedFile, "utf8"))) : null;
+const touched = (prefix) => !changed || [...changed].some((path) => path === prefix || path.startsWith(`${prefix}/`));
 
 if (!user) die("usage: node publish.mjs --user <username> [--trip <id>] [--dry-run] [--drafts]");
 
@@ -179,6 +193,7 @@ for (const figure of journal.figures) {
 // ── the trips ──────────────────────────────────────────────────────────────
 for (const trip of journal.trips) {
   if (onlyTrip && trip.id !== onlyTrip) continue;
+  if (!touched(`trips/${trip.id}`)) continue;
   say(`\n${trip.id}`);
   if (!trip.trip) { say("  ✗ no trip.json — nothing to send"); refused += 1; continue; }
   if (!trip.trip.document) { say(`  ✗ trip.json: ${trip.trip.problem}`); refused += 1; continue; }
@@ -187,6 +202,10 @@ for (const trip of journal.trips) {
   if (!await send(tripPath, trip.trip.document, `trip ${trip.id}`)) continue;
 
   for (const entry of trip.entries) {
+    // A day is worth sending when its own document changed, or when a
+    // photograph under its media folder did — the upload attaches to the day,
+    // so the two travel together.
+    if (!touched(`trips/${trip.id}/entries/${entry.file}`) && !touched(`trips/${trip.id}/media/${entry.slug}`)) continue;
     if (!entry.document) { say(`  ✗ ${entry.file}: ${entry.problem}`); refused += 1; continue; }
     const dayPath = `${tripPath}/days/${entry.slug}`;
     const remote = await fetchDoc(dayPath);

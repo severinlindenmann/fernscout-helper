@@ -10,10 +10,14 @@
 // B491, the client half of B1495. The server ships two read-only routes — a
 // manifest of every path, size and hash, and a file `GET` — and nothing else:
 // there is deliberately **no file `PUT`**, because a raw byte door onto a day
-// would bypass every validator the instance has, `checkWeather` among them,
-// and become a door through which an agent writes a temperature nobody
-// measured. So the down leg fetches bytes and the up leg goes through the same
-// typed routes `publish` already calls.
+// would bypass every validator the instance has and become a door through
+// which an agent writes a temperature nobody measured. So the down leg fetches
+// bytes and the up leg goes through the same typed routes `publish` already
+// calls.
+//
+// The two legs being different mechanisms is therefore the design rather than
+// an omission — but it is worth saying out loud, because "sync" suggests a
+// mirror in both directions and only the down leg is one.
 //
 // ## What this does not do, and why that is not an oversight
 //
@@ -32,11 +36,14 @@
 // test rather than by comment. Deleting `gps/` leaves every trip rendering
 // identically, which is the property that makes the folder safe at all.
 //
-// **`originals/` stay on the server.** They are what a photobook prints from,
-// an order of magnitude larger than what the site serves. Every run says how
-// many files and how many bytes it did not fetch, because a mirror that
-// silently omits the largest thing on disk while calling itself a backup is
-// worse than one that admits it.
+// **`originals/` come down with everything else**, since fernscout's B1719.
+// They used to stay on the server — they are what a photobook prints from and
+// an order of magnitude larger than what the site serves — and every run said
+// how many files and bytes it had not fetched. That was honest and it was
+// still a backup that gave back every photograph at a quarter of its pixels,
+// to an owner with no filesystem to fetch the masters from. A first pull is
+// now as large as the journal really is; a second one carries only what the
+// hashes say changed.
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
@@ -71,15 +78,14 @@ const dir = join(CONTENT, user);
 const bytes = (n) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.round(n / 1024)} kB` : `${(n / (1024 * 1024)).toFixed(1)} MB`);
 
 // ── what each side holds ───────────────────────────────────────────────────
-const answer = await call("GET", `/api/v1/${user}/sync/manifest`);
+const answer = await call("GET", `/api/v2/${user}/sync/manifest`);
 if (!answer.ok) {
   die(answer.status === 404
     ? `${SITE} answered 404 for ${user}'s manifest. Either there is no such journal, or this ` +
       `token is scoped to one trip — a sync reads the whole journal, so it needs the owner's.`
-    : `GET /api/v1/${user}/sync/manifest — ${answer.status} ${answer.body?.error ?? ""}`);
+    : `GET /api/v2/${user}/sync/manifest — ${answer.status} ${answer.body?.error ?? ""}`);
 }
 const remote = Object.fromEntries((answer.body.files ?? []).map((f) => [f.path, { size: f.size, hash: f.hash }]));
-const omitted = answer.body.omitted?.originals ?? { files: 0, bytes: 0 };
 
 mkdirSync(dir, { recursive: true });
 const base = readBase(dir);
@@ -117,11 +123,9 @@ console.log(
   `  ${Object.keys(remote).length} files on the site, ${Object.keys(local).length} here` +
   (base.fresh ? ", no previous sync" : `, last synced ${base.syncedAt ?? "at some point"}`),
 );
-if (omitted.files) {
-  console.log(
-    `  ${omitted.files} original${omitted.files === 1 ? "" : "s"} (${bytes(omitted.bytes)}) ` +
-    `${omitted.files === 1 ? "stays" : "stay"} on the server and ${omitted.files === 1 ? "is" : "are"} not in this sync.`,
-  );
+if (base.fresh) {
+  const total = Object.values(remote).reduce((n, f) => n + f.size, 0);
+  console.log(`  no previous sync, so this pulls the whole journal — ${bytes(total)}, originals included.`);
 }
 
 // ── conflicts ──────────────────────────────────────────────────────────────
@@ -188,8 +192,8 @@ if (direction === "up" && goneRemote.length) {
     "\n  Nothing was deleted there, and this script will not do it. A published day is refused\n" +
     "  by the delete route outright — destroying what people have already read is not a\n" +
     "  self-served round trip — and taking one off the site is an editorial decision:\n" +
-    `    POST /api/v1/${user}/trips/<trip>/days/<slug>/unpublish\n` +
-    `    DELETE /api/v1/${user}/trips/<trip>/days      (drafts, and it asks twice)`,
+    `    POST /api/v2/${user}/trips/<trip>/days/<slug>/unpublish\n` +
+    `    DELETE /api/v2/${user}/trips/<trip>/days/<slug>      (drafts only)`,
   );
 }
 
@@ -206,7 +210,7 @@ if (direction === "down") {
     // journal. `/<user>/export.zip` is the bulk door if that ever bites —
     // byte-faithful for everything it carries, minus `track.json`, which it
     // ships and the manifest excludes.
-    const response = await fetch(`${SITE}/api/v1/${user}/sync/file/${a.path.split("/").map(encodeURIComponent).join("/")}`, {
+    const response = await fetch(`${SITE}/api/v2/${user}/sync/file/${a.path.split("/").map(encodeURIComponent).join("/")}`, {
       headers: { authorization: `Bearer ${token()}` },
     });
     if (!response.ok) die(`GET …/sync/file/${a.path} — ${response.status}. Nothing further was fetched.`);
@@ -236,14 +240,15 @@ if (direction === "down") {
      * problem with somebody's journal in the middle. What this adds is the
      * one thing publish never had — a hash — so `--changed` narrows it to the
      * files that actually differ rather than re-`PATCH`ing fourteen days to
-     * correct one.
+     * correct one. On a 51-day journal that is the difference between three
+     * requests and a hundred and fifty.
      */
     const changedAt = join(dir, ".fernscout-sync-changed.json");
     writeFileSync(changedAt, JSON.stringify(pushes.map((a) => a.path)));
     // Publish's own flags, passed through rather than re-invented — `--drafts`
     // above all, which is the difference between writing the days and putting
     // them on the site, and is a person's word either way.
-    const passed = ["drafts", "weather", "replace-media", "skip-validate"].filter(has).map((f) => `--${f}`);
+    const passed = ["drafts"].filter(has).map((f) => `--${f}`);
     const trip = arg("trip");
     try {
       execFileSync(process.execPath, [
@@ -265,7 +270,7 @@ if (direction === "down") {
 // the instance assigns — so what landed is not always byte-for-byte what was
 // sent, and a base manifest recording the guess would make every later run
 // think that file had changed again.
-const after = await call("GET", `/api/v1/${user}/sync/manifest`);
+const after = await call("GET", `/api/v2/${user}/sync/manifest`);
 if (!after.ok) {
   console.log("\nCould not re-read the manifest, so the sync state was left as it was. The next run will work it out again.");
   process.exit(0);
