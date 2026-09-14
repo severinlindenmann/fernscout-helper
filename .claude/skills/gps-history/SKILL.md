@@ -11,7 +11,7 @@ actually drove.
 
 **Almost none of this skill is code, and that is the design.** The parsing, the
 thinning, the clipping and the drawing all happen on the instance —
-`POST /api/v1/<user>/import` reads Google Timeline, Google Takeout, GPX and
+`POST /api/v2/<user>/import` reads Google Timeline, Google Takeout, GPX and
 plain JSON Lines. What has to happen *here* is the part a server cannot do:
 finding the file on somebody's own machine and asking them the two questions
 below.
@@ -72,7 +72,8 @@ to a server, and although they can delete it, they cannot un-send it.
    format recognised it, how many positions came out and what span they cover.
    A span running to 1970, or a count of zero, means the file is not what it
    looks like — stop and say so.
-2. **Uploads it to the journal's inbox**, where it sits as a file belonging to
+2. **Uploads it through the one media door** (`POST /api/v2/<user>/media`, with
+   an intent saying the bytes are a `gps_history`), where it sits as a file belonging to
    no day.
 3. **Imports it**, which thins it — one position per five minutes or 250
    metres — and merges it with anything imported before. Importing the same

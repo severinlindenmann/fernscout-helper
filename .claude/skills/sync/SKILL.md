@@ -62,10 +62,13 @@ something a file diff gets to make.
   history is every address somebody sleeps at; what a reader ever sees is the
   derived line for one trip, and deleting `gps/` leaves every trip rendering
   identically. That is asserted by test on the instance, not promised here.
-- **`originals/`** — the full-resolution photographs a photobook prints from.
-  Every run prints how many files and how many bytes it did not fetch, because
-  a mirror that silently omits the largest thing on disk while calling itself a
-  backup is worse than one that admits it. Back those up with the filesystem.
+- ~~**`originals/`**~~ — **they are in the sync now** (fernscout B1719). The
+  full-resolution masters used to stay on the server, and every run printed how
+  many files and bytes it had not fetched. That was honest, and it was still a
+  backup that gave back every photograph at a quarter of its pixels — to an
+  owner with no filesystem to fetch the masters from. A first pull is now as
+  large as the journal really is; a later one carries only what the hashes say
+  changed.
 - **Generated output** — `postcards/`, `photobooks/`, `.ingest.json`, and each
   trip's `track.json`, which the server derives from a history this side never
   holds.

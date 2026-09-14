@@ -56,7 +56,7 @@ Five questions. Ask them together, in the person's own language:
 | **What is the trip called?** | Becomes the folder and the URL: lowercase, dashes, `algarve-2026` ages better than `holiday`. |
 | **Is there an album?** | `--album "Algarve"` is more precise than dates when they made one. Dates alone are fine. |
 | **All photos, or only the good ones?** | `--favourites` takes only hearted ones; `--top 15` takes every favourite plus the best-scoring rest, up to fifteen a day. Nothing takes everything. |
-| **Who else was on this trip?** | Their name, and — only if they want that person to be able to write to the trip — an address. `people:` is the byline *and* write access, so a name with the wrong address is worse than a name not listed yet; **never infer one**, including from a face you recognise in the photographs. Asked here, not at the end (step 7), because the answer shapes `travellers:` at build time and a person looking at their own holiday photographs still remembers who was there. |
+| **Who else was on this trip?** | Their name, and — only if they want that person to be able to write to the trip — an address. `people:` is the byline *and* write access, so a name with the wrong address is worse than a name not listed yet; **never infer one**, including from a face you recognise in the photographs. Asked here, not at the end (step 7), because the answer shapes the figures at build time and a person looking at their own holiday photographs still remembers who was there. |
 
 Photos scores its own pictures for composition and exposure, which is what
 `--top` sorts by. It is a decent first pass and it is not taste — say so, and say
@@ -157,35 +157,43 @@ spelling and keep the words.
 A day the notes call "**Nothing was written about this day**" gets no prose. Ask
 about it, or leave the placeholder. Both beat an invention.
 
-Write `trip.md` too, if it is not there:
+Write `trip.json` too, if it is not there — the whole trip is one document
+now, with costs and the planned route as sections of it:
 
-```markdown
----
-id: algarve-2026
-title: "Algarve 2026"
-start: "2026-06-22"
-end: "2026-07-01"
-status: current
-accent: sky                 # sky | yellow | green | coral | navy
-visibility: private         # private | public | guest — start closed
-people:                     # everyone step 2 named, however many that is
-  - name: "Their name"
-    email: "only if they gave one — write access, so never guess it"
----
-
-A paragraph about what this trip was, from what they told you.
+```json
+{
+  "id": "algarve-2026",
+  "title": "Algarve 2026",
+  "dates": { "from": "2026-06-22", "to": "2026-07-01" },
+  "accent": "sky",
+  "visibility": "private",
+  "people": [
+    { "name": "Their name", "email": "only if they gave one — write access, so never guess it" }
+  ],
+  "intro": "A paragraph about what this trip was, from what they told you.",
+  "declined": {
+    "costs": "nothing has been recorded about what this trip cost yet",
+    "plan": "no planned route was written down for this trip"
+  }
+}
 ```
+
+There is no `status:` — the dates say whether a trip is past, current or
+upcoming. Every optional section is either written or named in `declined` with
+a real reason; the two above are examples of the shape, not sentences to paste
+when they are not true.
 
 `private` means the people who were there. Never widen it without being asked,
 and never write a `passwordHash:` line.
 
 Leave `people:` off entirely if step 2's answer was just the person you are
 talking to — a byline of one is not a fault. If they named someone with an
-address, carry that same person into `travellers[].for` when you build the
+address, carry that same person into the figure's own `for` when you build the
 figures below, so their figure is tied to them rather than left an anonymous
-shape; a name with no address gets no `for:`, since that field is drawn from
-`people:` and an inferred one is exactly the address this rule exists to keep
-out.
+shape; a name with no address gets no `for`, since that field is drawn from
+`people` and an inferred one is exactly the address this rule exists to keep
+out. Figures are their own documents in v2 — one file each under
+`figures/`, journal-wide — and a trip names the ones it uses.
 
 A **photograph's** own label is the narrower version of the same idea, and it
 only ever narrows: a `guest` photo inside a `private` trip stays private,
@@ -198,10 +206,12 @@ is already `private`, say so rather than writing a label that changes nothing.
 
 Now, and not before, ask whether they want to add:
 
-- **Costs** — `costs:` on a day, or a `costs.md` for the trip. Needs a rate in
-  `trip.md` (`rates: { EUR: 0.94 }` reads "1 EUR = 0.94 in your base currency" —
-  it is easy to write upside down).
-- **Places** — days whose photos had no GPS have no `lat:`/`lng:`. They can say
+- **Costs** — `costs` on a day for what was spent that day, or the trip's own
+  `costs.items` for what was paid **before leaving**; the two are different
+  things in v2 and a trip carrying both reports its spend twice. A foreign
+  currency needs the trip to name it — `"rates": {"currencies": ["EUR"]}` — and
+  the server rates it; do not write a rate number.
+- **Places** — days whose photos had no GPS have no `coordinates`. They can say
   where it was.
 - **More photographs** — a day that came out thin, or the ones `--top` left
   behind. Re-run from step 2 with a higher `--top`; `--update` means nothing is

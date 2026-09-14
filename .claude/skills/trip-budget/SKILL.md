@@ -34,7 +34,10 @@ Ask a few at a time, in the person's own language, and take "I do not remember"
 for an answer. An empty field beats a made-up number: the costs page says
 "not counted" rather than inventing a total, which is the honest outcome.
 
-**Before the trip** — these go in `costs.md` with `--before`:
+**Before the trip** — these go on the trip itself with `--before`, in
+`trip.json`'s `costs.items`, which in v2 is *preparation only*: what was paid
+before leaving. Everything spent on the trip belongs to the day it was spent
+on, and a trip that carries both reports its spend twice:
 
 | Ask about | Category |
 | --- | --- |
