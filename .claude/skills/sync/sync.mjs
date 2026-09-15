@@ -52,7 +52,7 @@ import { arg, has } from "../shared/lib.mjs";
 import { SITE, call, reservedSources, sameAsWritten, token } from "../shared/api.mjs";
 import { CONTENT } from "../shared/journal.mjs";
 import {
-  contentHash, deletionRefusal, localManifest, plan, readBase, writeBase,
+  contentHash, deletionRefusal, localManifest, plan, readBase, servedDerivative, writeBase,
 } from "../shared/syncManifest.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -197,12 +197,22 @@ if (base.fresh) {
  * site does not own are not the same document, and are pushed exactly as
  * before.
  */
+
 let reserved = null;
 async function adoptAlreadyOnTheSite(candidates) {
   const taken = [];
   for (const path of candidates) {
-    // `.json` because it is a document on both sides; a photograph that
-    // differs in bytes differs, and there is nothing to normalise about it.
+    const settle = (why) => {
+      for (const a of actions) if (a.path === path) a.action = "settled";
+      taken.push({ path, why });
+    };
+    if (servedDerivative(path)) {
+      if (!dry) writeFileSync(join(dir, path), await fetchFile(path));
+      settle("derivative");
+      continue;
+    }
+    // `.json` for the rest: it is a document on both sides, and two of its
+    // fields are the site's to say.
     if (!path.endsWith(".json")) continue;
     let theirs;
     let ours;
@@ -216,8 +226,7 @@ async function adoptAlreadyOnTheSite(candidates) {
     }
     reserved ??= await reservedSources();
     if (!sameAsWritten(ours, theirs, reserved.sources)) continue;
-    for (const a of actions) if (a.path === path) a.action = "settled";
-    taken.push({ path });
+    settle("document");
     if (!dry) writeFileSync(join(dir, path), body);
   }
   return taken;
@@ -270,10 +279,12 @@ console.log(
 );
 for (const a of moving) console.log(`    ${direction === "down" ? "↓" : "↑"} ${a.path}  — ${a.reason}`);
 
-if (settledHere.length) {
-  const one = settledHere.length === 1;
+const settledDocuments = settledHere.filter((a) => a.why === "document");
+const settledDerivatives = settledHere.filter((a) => a.why === "derivative");
+if (settledDocuments.length) {
+  const one = settledDocuments.length === 1;
   console.log(
-    `\n  ${settledHere.length} file${one ? "" : "s"} already ${one ? "says" : "say"} on the site what ` +
+    `\n  ${settledDocuments.length} document${one ? "" : "s"} already ${one ? "says" : "say"} on the site what ` +
     `${one ? "it says" : "they say"} here, once the fields the site owns — a reading it made itself, ` +
     `whether a day is published — are counted as what this side can actually send. ` +
     `${dry ? "The site's copy would be taken" : "The site's copy was taken"} rather than sending a ` +
@@ -282,7 +293,17 @@ if (settledHere.length) {
   if (reserved?.fallback) {
     console.log(`    (this instance does not publish which source names are its own, so "open-meteo" was assumed — see /api/v2/status)`);
   }
-  for (const a of settledHere) console.log(`    = ${a.path}`);
+  for (const a of settledDocuments) console.log(`    = ${a.path}`);
+}
+if (settledDerivatives.length) {
+  const one = settledDerivatives.length === 1;
+  console.log(
+    `\n  ${settledDerivatives.length} photograph${one ? "" : "s"} ${one ? "is" : "are"} served by the site from ` +
+    `${one ? "its" : "their"} own derivative, which nothing here can make or send — what this folder held at ` +
+    `that path was the original the upload staged there. ${dry ? "The site's copy would be taken" : "The site's copy was taken"}; ` +
+    `the master is on the site under originals/ and comes down with everything else.`,
+  );
+  for (const a of settledDerivatives) console.log(`    = ${a.path}`);
 }
 
 

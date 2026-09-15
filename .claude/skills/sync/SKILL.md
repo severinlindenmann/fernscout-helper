@@ -137,6 +137,19 @@ same thing there is nothing to send: the site's copy is taken, the run names
 what it took, and both sides are recorded as agreeing. A document that differs
 in any field the site does not own is pushed exactly as before.
 
+**A photograph the site serves is the site's own work — B1789.** The bytes
+under `trips/<trip>/media/<day>/` are derived from an upload: nothing here can
+make them, and there is no door to send them. What a folder holds at that path
+after a `publish` is the *original* the upload staged there — named by its own
+hash, which is the name both copies sit under — so the two sides differ for
+ever, the run plans a push on every pass, publish sends nothing (the day
+already names that photograph), and the guard above calls it a push that did
+not land. 96 files on one real journal. The site's copy is taken instead.
+Nothing is lost: the original is on the site under `trips/<trip>/originals/`
+and comes down with everything else. `originals/` itself is left alone — a
+master is not derived from anything, so two sides differing there is a real
+difference somebody should look at.
+
 **There is no file `PUT` on the instance, and that is deliberate.** A raw byte
 door onto a day would bypass every validator there is — the required fields,
 the transport modes, the currency codes, the rule that every declared locale

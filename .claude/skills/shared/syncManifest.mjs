@@ -76,6 +76,34 @@ export function inSync(path) {
   return true;
 }
 
+/**
+ * `trips/<trip>/media/<day>/<file>` — a photograph as the **instance** serves
+ * it, and the other half of the same rule — B1789.
+ *
+ * These bytes are the server's own work: it derives them from the upload, and
+ * nothing on this side can produce them or send them. What the folder holds at
+ * that path after a `publish` is the *original* — named by its own hash, which
+ * is the name both copies sit under — because the upload staged it there and
+ * nothing replaced it. So the two sides differ for ever: `plan()` calls it a
+ * local change, `publish` sees a photograph the day already names and uploads
+ * nothing, `landed()` sees a remote hash that did not move, and the run exits
+ * non-zero saying a push did not land. Every run, and no action clears it. 96
+ * files on one real journal.
+ *
+ * Nothing is lost by taking the site's copy: the original is on the site under
+ * `trips/<trip>/originals/<day>/` — a print master, in the sync since fernscout
+ * B1719 — and comes down with everything else.
+ *
+ * `originals/` is deliberately NOT here. A master is not derived from
+ * anything, so two sides differing there is a real difference and somebody
+ * should look at it rather than have it quietly overwritten.
+ */
+export function servedDerivative(path) {
+  const segments = path.split("/");
+  return segments.length === 5 && segments[0] === "trips" && segments[2] === "media"
+    && !path.toLowerCase().endsWith(".json");
+}
+
 /** Every file under `dir`, relative and POSIX-slashed, names sorted. */
 function walkFiles(dir, root = dir, out = []) {
   let entries;

@@ -11,7 +11,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  contentHash, deletionRefusal, inSync, localManifest, plan, readBase, writeBase,
+  contentHash, deletionRefusal, inSync, localManifest, plan, readBase, servedDerivative, writeBase,
 } from "../shared/syncManifest.mjs";
 import { sameAsWritten } from "../shared/api.mjs";
 
@@ -84,6 +84,25 @@ test("nothing climbs out, and no dotfile travels", () => {
   assert.equal(inSync("trips/alps/media/.DS_Store"), false);
   assert.equal(inSync("postcards/x.pdf"), false);
   assert.equal(inSync("photobooks/x.pdf"), false);
+});
+
+// ── what the site makes and this side cannot — B1789 ───────────────────────
+test("a served photograph is the site's own work; a master and a sidecar are not", () => {
+  // The bytes under media/ are derived from an upload. Nothing here can make
+  // them or send them, and what a folder holds at that path after a publish is
+  // the original the upload staged — so the two sides differ for ever unless
+  // the site's copy wins.
+  assert.equal(servedDerivative("trips/budapest-2023/media/2023-07-08-morgen/b12e.jpg"), true);
+  assert.equal(servedDerivative("trips/budapest-2023/media/2023-07-08-morgen/b12e.mp4"), true);
+  // The sidecar beside it is a document, and is compared as one.
+  assert.equal(servedDerivative("trips/budapest-2023/media/2023-07-08-morgen/b12e.jpg.meta.json"), false);
+  // A print master is not derived from anything: two sides differing there is
+  // a real difference and nobody should overwrite it quietly.
+  assert.equal(servedDerivative("trips/budapest-2023/originals/2023-07-08-morgen/b12e.jpg"), false);
+  // Not a photograph on a day at all.
+  assert.equal(servedDerivative("trips/budapest-2023/entries/2023-07-08-morgen.json"), false);
+  assert.equal(servedDerivative("inbox/2023-07/b12e.jpg"), false);
+  assert.equal(servedDerivative("trips/budapest-2023/media/b12e.jpg"), false);
 });
 
 console.log("sync — the three-way compare");
