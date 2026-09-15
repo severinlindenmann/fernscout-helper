@@ -63,6 +63,18 @@ would have accepted, or refuses with the field, what arrived, what was
 expected, and — for a section that is neither answered nor declined — the key
 that would decline it.
 
+**A trip the instance does not hold yet has its days skipped**, with one line
+saying so. Asking about them anyway answered `404 unknown_trip` once per day —
+145 times on a first run — with the 26 real trip-level errors somewhere in the
+middle of it: correct information, and useless. A trip that exists and is
+refused for a content reason still has every day checked, because that refusal
+is about the document rather than the address (B1777).
+
+A day carrying a weather reading the instance made itself is asked about as
+`weather: true` — the same hand-back `publish` does — because the two have to
+agree about what a writable document is, or this passes what publishing is
+refused for (B1782).
+
 That is the whole of this half, and the reason it is not more than that is
 worth stating: this repository has re-derived the instance's rules twice and
 been wrong both times. `model.mjs` was a hand-kept copy of the file shape and

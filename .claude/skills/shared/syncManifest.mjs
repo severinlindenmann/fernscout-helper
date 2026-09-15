@@ -57,6 +57,12 @@ export function inSync(path) {
   const root = segments[0].toLowerCase();
   if (root === "gps" || root === "postcards" || root === "photobooks") return false;
   if (root === "inbox") return segments.length >= 3;
+  // `figures/<id>.json` — fernscout B1776. They are ordinary journal content:
+  // a document with an id, written and read over the API, referenced by a
+  // trip. Left out of the allow-list on both sides, they travelled in neither
+  // direction, so a folder that mirrors the instance was missing the figure
+  // library and a hosted owner had no copy of it at all.
+  if (root === "figures") return segments.length === 2 && segments[1].toLowerCase().endsWith(".json");
   if (root !== "trips") return false;
   if (segments.length < 3) return false;
   // `originals/` is IN, since the instance put it in (fernscout B1719). It
@@ -133,6 +139,36 @@ export function writeBase(dir, { site, user, files, syncedAt }) {
     join(dir, BASE_MANIFEST_FILE),
     JSON.stringify({ version: 1, instance: site, user, syncedAt, files }, null, 1),
   );
+}
+
+/**
+ * Agreement for a named set of paths, and nothing else — B1775.
+ *
+ * `publish` writes to the instance without going through a sync, and left the
+ * baseline untouched: both sides then held identical content while the
+ * baseline said they had never been synced, so the next `sync down` called
+ * 1,267 files "written on both sides, never synced" and refused to move. The
+ * refusal is right — without a baseline, "identical because one came from the
+ * other" and "two people edited this" are the same observation — and the tool
+ * that made them identical is the one that has to say so.
+ *
+ * `remote` is a fresh manifest from the server rather than a guess: the typed
+ * routes normalise what they are given, so what landed is not byte-for-byte
+ * what was sent, and a base entry records both sides for that reason.
+ */
+export function recordAgreed(dir, { site, user, paths, remote }) {
+  const base = readBase(dir);
+  const here = localManifest(dir, base.files);
+  const files = { ...base.files };
+  let agreed = 0;
+  for (const path of paths) {
+    if (!inSync(path)) continue;
+    if (!here[path] || !remote[path]) { delete files[path]; continue; }
+    files[path] = { ...here[path], remote: remote[path].hash };
+    agreed += 1;
+  }
+  writeBase(dir, { site, user, files, syncedAt: new Date().toISOString() });
+  return agreed;
 }
 
 /**

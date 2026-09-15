@@ -41,9 +41,12 @@ import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { arg, has } from "../shared/lib.mjs";
 import { CONTENT, isJournalShaped, mediaFile, readJournal, suggestedContentDir, usernames } from "../shared/journal.mjs";
-import { call, refusal, SITE } from "../shared/api.mjs";
+import { asWritten, call, FALLBACK_RESERVED_SOURCES, refusal, reservedSources, SITE } from "../shared/api.mjs";
 
 const found = [];
+/** Which source names are the server's own — read from it, never typed here
+ * (B1782, B1783). Offline this is unused. */
+const reserved = { sources: FALLBACK_RESERVED_SOURCES, fallback: true };
 const say = (severity, where, message, fix) => found.push({ severity, where, message, fix });
 const error = (w, m, f) => say("error", w, m, f);
 const warn = (w, m, f) => say("warn", w, m, f);
@@ -143,14 +146,15 @@ async function askTheInstance(path, document, where) {
   const result = existing.ok
     ? await call("PATCH", `${path}?dryRun=true`, { body: document, ifMatch: existing.etag })
     : await call("PUT", `${path}?dryRun=true`, { body: document });
-  if (result.ok) return;
+  if (result.ok) return { ok: true };
   if (result.status === 401 || result.status === 403) {
     error(where, `the instance refused the credential (${result.status})`,
       "a validation run reads and dry-runs the whole journal, so it needs the owner's token");
-    return;
+    return { ok: false, status: result.status };
   }
   error(where, refusal(result).split("\n").join("\n      "),
     "this is the instance's own answer — fix the folder, and never invent a decline to get past it");
+  return { ok: false, status: result.status, code: result.body?.error };
 }
 
 async function validateJournal(user) {
@@ -211,17 +215,38 @@ async function validateJournal(user) {
     }
 
     if (offline) continue;
-    await askTheInstance(`/api/v2/${user}/trips/${trip.id}`, trip.trip.document, where);
+    const verdict = await askTheInstance(`/api/v2/${user}/trips/${trip.id}`, trip.trip.document, where);
+    /**
+     * B1777: a day cannot be checked before its trip exists.
+     *
+     * This used to ask about every day regardless, so a first run over a
+     * journal the instance has never seen answered `404 unknown_trip` 145
+     * times and the 26 real trip-level errors were somewhere in the middle of
+     * it. Correct information, and useless. A trip that exists and is refused
+     * for a content reason still has its days checked — that refusal is about
+     * the document, not the address.
+     */
+    if (verdict.status === 404) {
+      warn(where, `${trip.entries.length} day(s) were not checked — the instance does not hold this trip yet`,
+        "publish the trip first, or read the trip-level refusal above; a day's address is under its trip");
+      continue;
+    }
     for (const entry of trip.entries) {
       if (!entry.document) continue;
       await askTheInstance(
         `/api/v2/${user}/trips/${trip.id}/days/${entry.slug}`,
-        { ...entry.document, slug: entry.slug },
+        // B1782: a reading the instance made itself is handed back as the ask
+        // that produced it, exactly as publish does — the two have to agree
+        // about what a writable document is, or this passes what publish is
+        // refused for.
+        { ...asWritten(entry.document, reserved.sources), slug: entry.slug },
         `${where}/${entry.slug}`,
       );
     }
   }
 }
+
+if (!offline) Object.assign(reserved, await reservedSources());
 
 // ── which journals ─────────────────────────────────────────────────────────
 const all = usernames();

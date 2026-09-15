@@ -6,7 +6,7 @@
 //
 //   node .claude/skills/icloud-export/build.metadata.test.mjs
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync, copyFileSync, rmSync, readFileSync, readdirSync } from "node:fs";
+import { mkdirSync, writeFileSync, copyFileSync, rmSync, readFileSync, readdirSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ROOT } from "../shared/lib.mjs";
@@ -82,6 +82,52 @@ function buildTrip(trip, user, photos) {
   ]);
   check("B650: a day where location: and coordinates agree prints no warning",
     !/⚠/.test(stdout), stdout);
+}
+
+// ── B1769: a key that is answered is not also declined ────────────────────
+{
+  const { text } = buildTrip("b1769-set-and-declined", "b1769-user", [
+    { name: "basel.jpg", day: "2025-11-16", taken: "2025-11-16T09:00:00", time: "09:00", place: "Basel, Switzerland", fav: false, lat: 47.5, lng: 7.6 },
+  ]);
+  const doc = JSON.parse(text);
+  const both = Object.keys(doc.declined ?? {}).filter((key) => doc[key] !== undefined);
+  check("B1769: no key is both set and declined — the instance refuses that outright",
+    both.length === 0, both.join(", "));
+  check("B1769: a day whose photographs carried a time does not also decline time",
+    doc.time === "09:00" && !("time" in (doc.declined ?? {})), text);
+}
+
+// ── B1768: a rebuild replaces the trip, it does not add to it ──────────────
+{
+  const TRIP = "b1768-rebuild", USER = "b1768-user";
+  const EXPORT_DIR = join(ROOT, "export", TRIP), CONTENT_DIR = join(ROOT, "content", USER);
+  const ENTRIES = join(CONTENT_DIR, "trips", TRIP, "entries");
+  const run = (...extra) => {
+    try {
+      return execFileSync(process.execPath, [BUILD, "--trip", TRIP, "--user", USER, ...extra],
+        { encoding: "utf8", stdio: "pipe" });
+    } catch (failure) { return (failure.stdout ?? "") + (failure.stderr ?? "") }
+  };
+  rmSync(EXPORT_DIR, { recursive: true, force: true });
+  rmSync(CONTENT_DIR, { recursive: true, force: true });
+  mkdirSync(join(EXPORT_DIR, "photos"), { recursive: true });
+  copyFileSync(FIXTURE, join(EXPORT_DIR, "photos", "basel.jpg"));
+  writeFileSync(join(EXPORT_DIR, "photos.json"), JSON.stringify({ trip: TRIP, photos: [
+    { name: "basel.jpg", day: "2025-11-16", taken: "2025-11-16T09:00:00", time: "09:00", place: "Basel, Switzerland", fav: false, lat: 47.5, lng: 7.6 },
+  ] }, null, 2));
+  run();
+  // A day file under a naming scheme this build no longer writes — which is
+  // exactly what an older build left behind.
+  writeFileSync(join(ENTRIES, "2025-11-16-an-older-slug.json"), "{}\n");
+  const refused = run();
+  check("B1768: a second build into a folder that already holds entries refuses",
+    /already holds/.test(refused) && existsSync(join(ENTRIES, "2025-11-16-an-older-slug.json")), refused);
+  run("--force");
+  const left = readdirSync(ENTRIES);
+  check("B1768: --force replaces the entries rather than writing beside them",
+    left.length === 1 && !left.includes("2025-11-16-an-older-slug.json"), left.join(", "));
+  rmSync(EXPORT_DIR, { recursive: true, force: true });
+  rmSync(CONTENT_DIR, { recursive: true, force: true });
 }
 
 if (failed > 0) {

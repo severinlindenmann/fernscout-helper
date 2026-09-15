@@ -36,9 +36,10 @@
 //    limits come from `/api/v2/status`; the 40 that used to be written into
 //    this file twice was right only on the day somebody typed it.
 import { readFileSync, writeFileSync, existsSync, statSync, renameSync } from "node:fs";
-import { basename, join, dirname } from "node:path";
-import { call, limits, openapi, refusal, requestSchema, SITE } from "../shared/api.mjs";
+import { basename, join, dirname, sep } from "node:path";
+import { asWritten, call, limits, openapi, refusal, requestSchema, reservedSources, SITE } from "../shared/api.mjs";
 import { readJournal, mediaFile } from "../shared/journal.mjs";
+import { recordAgreed } from "../shared/syncManifest.mjs";
 import { arg, die, has } from "../shared/lib.mjs";
 
 const user = arg("user");
@@ -64,6 +65,16 @@ if (!user) die("usage: node publish.mjs --user <username> [--trip <id>] [--dry-r
 const journal = readJournal(user);
 const say = (line) => console.log(line);
 let refused = 0;
+
+/** Every path this run actually wrote to the instance, relative to
+ * `content/<user>/` — what the sync baseline is recorded for at the end
+ * (B1775). A path that was refused, or unchanged, is not in here. */
+const sent = new Set();
+
+/** The source names only the server may write, and how many readings this run
+ * handed back to it rather than claiming (B1782). */
+const reserved = await reservedSources();
+let handedBack = 0;
 
 /** A refusal, said once, with everything the server offered about how to fix
  * it. The old version printed `problems[]` and threw `missing[]` away, so a
@@ -98,18 +109,49 @@ async function fetchDoc(path) {
  * server derived from the bytes at upload — and replacing it wholesale would
  * take those with it.
  */
-async function send(path, document, what) {
+async function send(path, document, what, { replace = false, records } = {}) {
   const existing = await fetchDoc(path);
+
+  /**
+   * B1774: a figure has no `PATCH`.
+   *
+   * `app/api/v2/[user]/figures/[id]` exports `GET`, `PUT` and `DELETE`, and
+   * its `PUT` *is* the correction door — carrying `If-Match` is how a caller
+   * says "I have read this and mean to replace it". Correcting one with a
+   * `PATCH` therefore answered 405 for every figure that already existed, so
+   * every run after the first exited non-zero — and since the exit code is
+   * the whole run's, five trips whose days had all landed perfectly were
+   * reported FAILED. A real failure was indistinguishable from this noise.
+   *
+   * And nothing unchanged is written at all: `sendJournal` already compares
+   * before it patches, for the same reason. A run should not write on every
+   * pass just to print a line.
+   */
+  if (existing && replace && same(document, existing.doc)) {
+    say(`  unchanged     ${what}`);
+    return existing.doc;
+  }
   if (dry) {
     say(`  ${existing ? "would correct " : "would create  "} ${what}`);
     return existing?.doc ?? document;
   }
   const result = existing
-    ? await call("PATCH", path, { body: document, ifMatch: existing.etag })
+    ? await call(replace ? "PUT" : "PATCH", path, { body: document, ifMatch: existing.etag })
     : await call("PUT", path, { body: document });
   if (!result.ok) return refuse(result, what);
   say(`  ${existing ? "corrected    " : "created      "} ${what}`);
+  if (records) sent.add(records);
   return result.body;
+}
+
+/** Does the instance already hold exactly what is on disk? Only the keys the
+ * folder has an opinion about: a stored document also carries what the server
+ * owns, and a difference there is not a reason to write. */
+function same(document, stored) {
+  if (!stored || typeof stored !== "object") return false;
+  return Object.entries(document).every(
+    ([key, value]) => JSON.stringify(value) === JSON.stringify(stored[key]),
+  );
 }
 
 /**
@@ -191,6 +233,9 @@ async function uploadMedia(tripId, daySlug, item, maxBytes, entry) {
   const storedSrc = result.body?.src ?? result.body?.items?.[0]?.src;
   const adopted = entry && adoptStoredName(entry, item, storedSrc);
   say(`  uploaded       ${item.src}${adopted ? `  → ${storedSrc}` : ""}`);
+  // The path as it is now named on disk — after the rename, if there was one.
+  const stored = mediaFile(journal, adopted ? storedSrc : item.src);
+  if (stored) sent.add(stored.slice(journal.dir.length + 1).split(sep).join("/"));
   return adopted;
 }
 
@@ -276,6 +321,7 @@ async function sendJournal() {
   const result = await call("PATCH", `/api/v2/${user}`, { body, ifMatch: existingJournal.etag });
   if (!result.ok) { refuse(result, "the journal document"); return; }
   say(`  corrected      the journal (${Object.keys(body).join(", ")})`);
+  sent.add("config.json");
 }
 
 /** The owner block the API takes — `{name, nickname, email}` — and nothing
@@ -297,8 +343,10 @@ if (!onlyTrip && touched("config.json")) {
 // exist yet is refused.
 if (journal.figures.length) say("\nfigures");
 for (const figure of journal.figures) {
+  if (!touched(`figures/${figure.id}.json`)) continue;
   if (!figure.document) { say(`  ✗ figures/${figure.id}.json: ${figure.problem}`); refused += 1; continue; }
-  await send(`/api/v2/${user}/figures/${figure.id}`, figure.document, `figure ${figure.id}`);
+  await send(`/api/v2/${user}/figures/${figure.id}`, figure.document, `figure ${figure.id}`,
+    { replace: true, records: `figures/${figure.id}.json` });
 }
 
 // ── the trips ──────────────────────────────────────────────────────────────
@@ -310,7 +358,8 @@ for (const trip of journal.trips) {
   if (!trip.trip.document) { say(`  ✗ trip.json: ${trip.trip.problem}`); refused += 1; continue; }
 
   const tripPath = `/api/v2/${user}/trips/${trip.id}`;
-  if (!await send(tripPath, trip.trip.document, `trip ${trip.id}`)) continue;
+  if (!await send(tripPath, trip.trip.document, `trip ${trip.id}`,
+    { records: `trips/${trip.id}/trip.json` })) continue;
 
   for (const entry of trip.entries) {
     // A day is worth sending when its own document changed, or when a
@@ -322,7 +371,20 @@ for (const trip of journal.trips) {
     const remote = await fetchDoc(dayPath);
     // The slug is the filename on disk and the address on the wire; the
     // document itself never carries a second copy of it.
-    const day = { ...entry.document, slug: entry.slug };
+    /**
+     * B1782: a day the instance looked the weather up for comes back carrying
+     * `source: "open-meteo"`, `sync down` writes that document to disk as-is
+     * — it is a byte mirror — and every write route then refuses it by name.
+     * 189 entries in one journal were in that state, so a folder that had been
+     * synced down could no longer create its own days.
+     *
+     * The ask goes back instead of the answer. The file on disk keeps the
+     * reading: it is real data the instance measured and the folder is its
+     * mirror.
+     */
+    const written = asWritten(entry.document, reserved.sources);
+    if (written !== entry.document) handedBack += 1;
+    const day = { ...written, slug: entry.slug };
 
     if (dry) {
       say(`  ${remote ? "would correct " : "would create  "} day ${entry.slug}`);
@@ -332,6 +394,7 @@ for (const trip of journal.trips) {
         : await call("PUT", dayPath, { body: day });
       if (!result.ok) { refuse(result, `day ${entry.slug}`); continue; }
       say(`  ${remote ? "corrected    " : "created      "} day ${entry.slug}`);
+      sent.add(`trips/${trip.id}/entries/${entry.file}`);
     }
 
     const pending = pendingMedia(entry.document, remote?.doc);
@@ -365,6 +428,34 @@ for (const trip of journal.trips) {
 }
 
 say("");
+if (handedBack) {
+  say(`${handedBack} day(s) carried a reading this server made itself — sent back as \`weather: true\`, ` +
+      `which is the ask that produced it. The files here keep the reading.`);
+  if (reserved.fallback) {
+    say(`  (this instance does not publish which source names are its own, so "open-meteo" was assumed — ` +
+        `see /api/v2/status)`);
+  }
+}
+
+/**
+ * The sync baseline, for what this run wrote — B1775.
+ *
+ * Skipped when a sync invoked this (`--changed`): the baseline is then the
+ * sync's to write at the end of its own run, over the paths it planned, and
+ * two writers of one file is the problem this whole area already had once.
+ */
+if (!dry && !changed && sent.size) {
+  const after = await call("GET", `/api/v2/${user}/sync/manifest`);
+  if (!after.ok) {
+    say(`  note: could not re-read the manifest (${after.status}), so the sync state was left alone. ` +
+        `A sync will work it out again.`);
+  } else {
+    const remoteFiles = Object.fromEntries((after.body.files ?? []).map((f) => [f.path, { size: f.size, hash: f.hash }]));
+    const agreed = recordAgreed(journal.dir, { site: SITE, user, paths: sent, remote: remoteFiles });
+    say(`Sync state updated for ${agreed} path(s) this run wrote, so a sync down does not read them as a conflict.`);
+  }
+}
+
 if (refused) {
   say(
     `${refused} thing(s) were refused. Nothing was invented to get past a refusal — ` +

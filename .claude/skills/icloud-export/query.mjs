@@ -22,6 +22,18 @@ const FIELDS = {
   score: "{photo.score.overall}", place: "{place.name}",
   name: "{photo.original_filename}", bytes: "{photo.original_filesize}",
   lat: "{photo.latitude}", lng: "{photo.longitude}",
+  // Which camera took it. A library holds more than one person's photographs,
+  // and two people can be a thousand kilometres apart on the same day —
+  // narrow.mjs needs this to tell one household's trip from somebody else's.
+  model: "{photo.exif_info.camera_model}",
+  // B1780: what the library thinks the pixels are. A file can hold valid EXIF
+  // and no decodable image — one 7.6 kB truncated JPEG, broken *in the
+  // library*, so deleting the export and fetching it again returns the same
+  // bytes. Every tool downstream then discovers it separately, and it came
+  // back a second time when the same dates were queried under another trip
+  // name. This is the one step that decides what a selection contains, so it
+  // is the one place to say it.
+  height: "{photo.height}", width: "{photo.width}",
 };
 const args = ["query"];
 if (from) args.push("--from-date", from);
@@ -41,10 +53,22 @@ rows = rows.map((r) => ({
   uuid: r.uuid, name: r.name, taken: r.taken, day: r.taken.slice(0, 10), time: r.taken.slice(11, 16),
   place: flag(r.place) ? r.place : "", fav: flag(r.fav), video: flag(r.video),
   screenshot: flag(r.screenshot), score: Number(r.score) || 0, bytes: Number(r.bytes) || 0,
+  model: flag(r.model) ? r.model : "",
+  height: Number(r.height) || 0, width: Number(r.width) || 0,
   lat: flag(r.lat) ? Number(r.lat) : null, lng: flag(r.lng) ? Number(r.lng) : null,
 }));
 
 if (!rows.length) die("Nothing found for that range or album. Check the dates, or the album name as it is spelled in Photos.");
+
+// Named once, here, rather than by each tool in turn (B1780).
+const broken = rows.filter((r) => !r.width || !r.height);
+if (broken.length) {
+  rows = rows.filter((r) => r.width && r.height);
+  console.log(`\n${broken.length} file(s) the library reports with no image in them — left out of the selection.`);
+  console.log(`  These are broken in the Photos library itself: re-exporting fetches the same bytes.`);
+  for (const r of broken.slice(0, 10)) console.log(`    ${r.day} ${r.name}`);
+  if (broken.length > 10) console.log(`    … and ${broken.length - 10} more`);
+}
 
 let picked = rows.filter((r) => !r.screenshot && (has("videos") || !r.video));
 if (has("favourites") || has("favorites")) picked = picked.filter((r) => r.fav);

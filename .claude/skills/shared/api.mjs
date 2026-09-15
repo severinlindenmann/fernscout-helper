@@ -135,6 +135,48 @@ export async function limits(options = {}) {
   return { limits: doc.limits ?? {}, media: doc.media ?? {}, capabilities: doc.capabilities ?? {}, from };
 }
 
+/**
+ * The source names only this server may write — B1782, B1783.
+ *
+ * A reading the instance looked up comes back on every GET and in a sync's
+ * byte mirror, carrying `source: "open-meteo"`. Sending it back is refused by
+ * name ("this source name is the server's own — a caller may never claim it"),
+ * which is right: the server can check that a source was *named*, never that
+ * it was real, so a caller claiming its own name is the one lie it can catch.
+ * The client's half of that bargain is to send the ask instead of the answer.
+ *
+ * **Read, not carried.** B1580 published the list for exactly this reason and
+ * the v2 port lost the reading; the fallback is a fallback and says so once.
+ */
+/**
+ * What to assume when the instance will not say — and the only copy of the
+ * name anywhere in this repository. An offline tool (`convert.mjs`) has
+ * nothing to ask, so it uses this; anything with a network reads
+ * `reservedSources()` instead and this is its fallback.
+ */
+export const FALLBACK_RESERVED_SOURCES = ["open-meteo"];
+
+export async function reservedSources(options = {}) {
+  let doc = {};
+  try { ({ doc } = await status(options)) } catch { doc = {} }
+  const published = doc?.weather?.reservedSources;
+  if (Array.isArray(published) && published.length) return { sources: published, fallback: false };
+  return { sources: FALLBACK_RESERVED_SOURCES, fallback: true };
+}
+
+/**
+ * One document, as it can be written: a weather reading this server made
+ * itself becomes `weather: true` again — the ask that produced it — and
+ * anything else is left exactly as it is, including a reading from somebody's
+ * own instrument, which is supported rather than tolerated.
+ */
+export function asWritten(document, sources) {
+  const source = document?.weather?.source;
+  if (typeof source !== "string") return document;
+  if (!sources.some((name) => name.toLowerCase() === source.toLowerCase())) return document;
+  return { ...document, weather: true };
+}
+
 /** Follow a `$ref` into the document's own components. */
 export function deref(schema, doc) {
   const name = schema?.$ref?.split("/").pop();

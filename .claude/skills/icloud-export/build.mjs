@@ -5,9 +5,9 @@
 //
 //   node build.mjs --trip algarve-2026 --user severin
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readdirSync, readFileSync, writeFileSync, existsSync, copyFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, existsSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
-import { ROOT, arg, die, stemOf } from "../shared/lib.mjs";
+import { ROOT, arg, die, has, stemOf } from "../shared/lib.mjs";
 import { ensureBaked, DEFAULT_MAX_EDGE } from "./bake.mjs";
 
 const trip = arg("trip") ?? die("--trip <name> is required.");
@@ -18,6 +18,18 @@ const DIR = join(ROOT, "export", trip);
 const photosDir = join(DIR, "photos");
 const review = existsSync(join(DIR, "review.json"))
   ? JSON.parse(readFileSync(join(DIR, "review.json"), "utf8")) : { photos: {}, days: {} };
+// B1767: the sheets, and so everything written from them, can predate the
+// review that turned photographs off. Nothing can tell which sentence
+// described which frame — so this says so rather than guessing, and says it
+// where somebody is about to write the prose.
+const reviewFile = join(DIR, "review.json"), sheetIndex = join(DIR, "sheets", "index.json");
+if (existsSync(sheetIndex) && existsSync(reviewFile)
+    && statSync(sheetIndex).mtimeMs < statSync(reviewFile).mtimeMs) {
+  const turnedOff = Object.values(review.photos ?? {}).filter((s) => s.drop).length;
+  console.log(`  ⚠ the contact sheets were made before the review, which turned ${turnedOff} photograph(s) off.`);
+  console.log(`    Anything already written from those sheets may describe a photograph that is no longer here.`);
+}
+
 const meta = new Map();
 for (const p of JSON.parse(readFileSync(join(DIR, "photos.json"), "utf8")).photos) meta.set(stemOf(p.name), p);
 
@@ -36,6 +48,23 @@ const byDay = {};
 for (const p of kept) (byDay[p.day] ??= []).push(p);
 
 const TRIP = join(ROOT, "content", user, "trips", trip);
+
+// B1768: this used to add rather than replace. `mkdirSync` a folder that is
+// already there and write one file per day into it, and a trip rebuilt after
+// anything changed the slug scheme keeps both sets — every one of 18 rebuilt
+// trips came out with exactly double the entries, old title-slug files beside
+// fresh location-slug ones. Each file is individually valid, so a validation
+// pass calls it "28 entries, 0 issues" and only a rename collision gives it
+// away. `originals/` is never touched: a print master is not a derivative.
+const occupied = ["entries", "media"].filter((d) => {
+  try { return readdirSync(join(TRIP, d)).length > 0 } catch { return false }
+});
+if (occupied.length && !has("force")) {
+  die(`content/${user}/trips/${trip}/ already holds ${occupied.join(" and ")}.\n` +
+      "Building on top of it leaves the old files beside the new ones, and both look valid.\n" +
+      "Pass --force to replace them (originals/ is left alone), or build into a different trip name.");
+}
+for (const d of occupied) rmSync(join(TRIP, d), { recursive: true, force: true });
 mkdirSync(join(TRIP, "entries"), { recursive: true });
 
 const notes = [`# ${trip} — what the author said`, "",
@@ -123,7 +152,7 @@ for (const [day, list] of Object.entries(byDay).sort()) {
   // get past the check.
   const declined = {
     costs: "no spending was recorded while these photographs were taken",
-    time: "the time of day was not recorded beyond the photographs' own",
+
     timezone: "no timezone was established for this day",
     transportMode: "no transport leg was recorded for this day",
     tags: "no tags were applied to this day",
@@ -131,6 +160,11 @@ for (const [day, list] of Object.entries(byDay).sort()) {
     visibility: "this day is as open as the trip it belongs to",
     weather: "no weather reading was taken; ask the server for one by sending weather: true",
   };
+  // B1769: `time` was declined unconditionally while `time:` was also set, and
+  // the instance refuses a section that is "there and consciously absent at
+  // once" — 145 of 196 entries in one run. Nothing local said so: the folder
+  // is written happily and the refusal only arrives on the wire.
+  if (!first.time) declined.time = "the time of day was not recorded beyond the photographs' own";
   if (!place) declined.location = "no place name came with these photographs";
   if (!country) declined.country = "no country came with these photographs";
   declined.countryCode = "no country code is written here — a wrong flag is worse than no flag";
@@ -141,7 +175,7 @@ for (const [day, list] of Object.entries(byDay).sort()) {
     title: "",
     date: day,
     content: "",
-    time: first.time,
+    ...(first.time ? { time: first.time } : {}),
     ...(place ? { location: place } : {}),
     // The name as Photos gives it, which is the Mac's own language — the
     // journal may be written in another one. No `countryCode`: mapping a name
@@ -164,6 +198,11 @@ for (const [day, list] of Object.entries(byDay).sort()) {
     declined,
     status: "draft",
   };
+  // The rule the last one broke, checked once for every field rather than
+  // remembered for each: a key cannot be both answered and declined.
+  const both = Object.keys(declined).filter((key) => document[key] !== undefined);
+  if (both.length) die(`${fullSlug}: ${both.join(", ")} would be both set and declined — that is refused on the wire.`);
+
   writeFileSync(join(TRIP, "entries", `${fullSlug}.json`), `${JSON.stringify(document, null, 2)}\n`);
   written++;
 

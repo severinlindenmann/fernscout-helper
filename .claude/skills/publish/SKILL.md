@@ -108,6 +108,42 @@ A reading somebody actually took goes in `weather` as an object with its own
 `source` and `recordedAt`. `open-meteo` as a source is refused by name: it
 means the server measured it.
 
+**Which is why a day that came down from the instance cannot go back up
+unchanged.** A day the server looked up carries its own reading, `sync down`
+writes that document to disk as-is — it is a byte mirror — and sending it back
+is refused by name. 189 entries in one journal were in that state, so the
+folder could no longer create its own days. Publishing now hands such a reading
+back as `weather: true`, the ask that produced it, and says how many it did
+that for; the file on disk keeps the reading, which is real data the instance
+measured. The names that count as the server's own are read from
+`/api/v2/status` rather than typed here — an instance that does not publish
+them falls back to `open-meteo` and the run says so once (B1782).
+
+## Figures go through the door they have
+
+A figure has no `PATCH`. `PUT` is its correction door too, and carrying
+`If-Match` is how a caller says "I have read this and mean to replace it" —
+so correcting one with a `PATCH` answered 405 for every figure that already
+existed. Since a refusal makes the whole run exit non-zero, five trips whose
+days had all landed perfectly were reported FAILED and a real failure was
+indistinguishable from the noise. A figure the instance already holds
+unchanged is not written at all, and the run says `unchanged` rather than
+claiming a correction (B1774).
+
+## What a publish leaves behind for a sync
+
+`publish` writes straight to the instance without going through a sync, and it
+used to leave the sync baseline untouched: both sides then held identical
+content while the baseline said they had never been synced, so the next
+`sync down` called 1,267 files *"written on both sides, never synced"* and
+refused to move. It was right to — without a baseline, "identical because one
+came from the other" and "two people edited this" are the same observation.
+
+So a plain run records agreement for the paths it actually wrote, reading the
+site's manifest back rather than guessing at what landed. A run started *by* a
+sync (`--changed`) leaves the baseline alone: it is the sync's to write at the
+end of its own run (B1775).
+
 ## The limits are the instance's, not this repository's
 
 The per-day photograph ceiling, the image size limit and the formats come from

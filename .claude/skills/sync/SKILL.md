@@ -73,6 +73,12 @@ something a file diff gets to make.
   client's. **Treat a pulled `config.json` as personal data**: it carries
   somebody's telephone number in plain text, in a folder people copy between
   machines.
+- ~~**`figures/`**~~ — **they are in the sync now** (fernscout B1776). The
+  figure library was outside the allow-list on both sides, so it travelled in
+  neither direction: a folder that mirrors the instance was missing it
+  entirely, and a hosted owner — who has no filesystem to copy it from — had no
+  copy of their own figures at all. `figures/<id>.json` and nothing else under
+  that folder.
 - ~~**`originals/`**~~ — **they are in the sync now** (fernscout B1719). The
   full-resolution masters used to stay on the server, and every run printed how
   many files and bytes it had not fetched. That was honest, and it was still a

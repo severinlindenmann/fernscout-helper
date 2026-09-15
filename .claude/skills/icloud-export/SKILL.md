@@ -8,17 +8,34 @@ description: Turn a time range of a Mac's iCloud/Photos library into a Fernscout
 The person has a Mac, a Photos library, and a holiday they never wrote up. This
 walks them from there to a folder of markdown and photographs they own.
 
-**Five commands, in order.** Everything lives in `.claude/skills/icloud-export/`,
+**The commands, in order.** Everything lives in `.claude/skills/icloud-export/`,
 and everything a run produces lands in `export/<trip>/` and `content/<user>/`,
 both gitignored.
 
 ```bash
-./check.sh                                          # 1. tools
-node query.mjs  --trip <trip> --from … --to …       # 2. what is there
-node export.mjs --trip <trip>                       # 3. pull the files
-node review.mjs --trip <trip>                       # 4. the person chooses and writes
-node build.mjs  --trip <trip> --user <user>         # 5. the content folder
+./check.sh                                           # 1. tools
+node query.mjs   --trip <trip> --from … --to …       # 2. what is there
+node narrow.mjs  --trip <trip> --who <person>        #    a date range is not a trip (optional)
+node blur.mjs    --trip <trip>                       #    zones that should not be published to the metre
+node export.mjs  --trip <trip>                       # 3. pull the files
+node review.mjs                                      # 4. the person chooses and writes
+node describe.mjs --trip <trip>                      #    contact sheets, AFTER the review
+node build.mjs   --trip <trip> --user <user>         # 5. the content folder
 ```
+
+**The order of 4 and 4½ is not a preference.** `describe.mjs` makes one contact
+sheet per day so an agent can look at a trip without opening two thousand
+files, and whatever is written from those sheets **outlives the review**: a
+photograph the person turns off for privacy keeps its sentence. In one run 51
+of 147 days carried prose describing removed photographs, one of them opening
+by describing the payment cards their owner had just turned off. So
+`describe.mjs` refuses to run before a review, and `--before-review` is how to
+say the other order is deliberate (B1767).
+
+`narrow.mjs` and `blur.mjs` also have an order between them, and it is
+enforced rather than documented: `narrow.mjs` rebuilds the selection from the
+untouched copy, so it re-applies a blur it would otherwise have undone
+(B1770).
 
 ## The one rule
 
@@ -82,13 +99,27 @@ node export.mjs --trip algarve-2026
 Safe to re-run: it only fetches what is missing. Live Photos drag a `.mov` along
 and it removes them; `--videos` keeps them, and needs `ffmpeg`.
 
+**It checks what actually landed, and fails if something did not.** `osxphotos`
+does not always honour `--convert-to-jpeg` — 21 of 28 files in one trip came
+out as `.HEIC` — and since every later step reads only JPEGs those photographs
+were *invisible* rather than broken: a fifteen-photograph day became a
+three-photograph sheet and the run said it had succeeded. So anything left in
+another format is converted (with its tags copied across, because the
+coordinates are the whole reason `--exiftool` is not optional), and then what
+is on disk is compared with what was asked for. `--check` runs just that pass
+over an export that already happened (B1772).
+
 ## 4. The review page
 
 ```bash
-node review.mjs --trip algarve-2026
+node review.mjs                       # every exported trip, with an index
+node review.mjs --trip algarve-2026   # straight into one of them
 ```
 
-Opens `http://localhost:4321` in the browser. **Tell the person what to do there,
+Opens `http://localhost:4321` in the browser. **One server, all the trips** —
+`/` lists everything under `export/` with how far each one has got, and each
+trip is at `/t/<trip>/`. Ten years of a library came out as 26 trips, which
+used to mean 26 servers on 26 ports (B1778). **Tell the person what to do there,
 in two sentences** — the page says it too, but hearing it from you is what makes
 them start:
 
@@ -110,7 +141,31 @@ Then **stop and wait.** Do not poll the file, do not guess when they are done.
 The page ends with a note telling them to come back and say "I am done with the
 photos, please continue", and that sentence is your cue.
 
-Everything they do is saved to `export/<trip>/review.json` as they type.
+Everything they do is saved to `export/<trip>/review.json` as they type. A save
+keeps whatever else is in that file, because two of its keys are not the
+page's.
+
+**`flags` is one of them, and it is the most useful thing here.** Looking at
+every photograph of a trip finds what nobody went looking for: in one ten-year
+run the per-day descriptions turned up an identity card front and back with its
+MRZ, a bank card with the full cardholder name, a phone screen with a name,
+IBAN and BIC, a hostel envelope with a door code, hotel cards with guest names
+and Wi-Fi passwords, and a parcel label with a name and address. So whoever
+reads the contact sheets writes what they saw into `review.json`:
+
+```json
+{
+  "flags": {
+    "IMG_4412.JPG": "an identity card, front and back — name, photo, ID number"
+  },
+  "observed": { "2026-06-23": "what the day's photographs show, as a memory-jogger" }
+}
+```
+
+The page then outlines those frames in red, says how many there are, and offers
+a jump straight to them instead of the person hunting by date. **It marks; it
+does not decide** — turning the photograph off is still their press, and an
+unflagged photograph is not a claim that there is nothing in it (B1779).
 
 ## 5. Build the content folder
 
@@ -118,7 +173,12 @@ Everything they do is saved to `export/<trip>/review.json` as they type.
 node build.mjs --trip algarve-2026 --user severin
 ```
 
-One entry per day, in `content/<user>/trips/<trip>/`. Photographs are resized to
+One entry per day, in `content/<user>/trips/<trip>/`. **It replaces the trip
+rather than adding to it**: it used to write into whatever was already there,
+and every one of 18 rebuilt trips ended up with exactly double the entries —
+old files beside new ones, each individually valid, so a validation pass called
+it "28 entries, 0 issues". A second build refuses unless `--force` says to
+replace what is there; `originals/` is never touched (B1768). Photographs are resized to
 **4000px** and **stripped of all metadata** — a phone writes the coordinates of
 somebody's front door into a file — with the coordinates kept in the frontmatter
 instead, where they can be seen and deleted. Photo notes become captions.

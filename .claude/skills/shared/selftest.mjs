@@ -107,6 +107,14 @@ const UNIT = [
   ".claude/skills/icloud-export/build.test.mjs",
   ".claude/skills/icloud-export/build.metadata.test.mjs",
   ".claude/skills/icloud-export/review.test.mjs",
+  ".claude/skills/icloud-export/review.server.test.mjs",
+  ".claude/skills/icloud-export/describe.test.mjs",
+  ".claude/skills/icloud-export/narrow.test.mjs",
+  ".claude/skills/icloud-export/export.test.mjs",
+  // Written with find-trips and never added here, so the two rules that cost a
+  // whole day of somebody's journal — a day is a journey not a point, a
+  // household is not one unit — were tested by nothing that ever ran.
+  ".claude/skills/find-trips/discover.test.mjs",
 ];
 for (const test of UNIT) {
   const path = join(ROOT, test);

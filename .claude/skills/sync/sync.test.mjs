@@ -62,6 +62,18 @@ test("the content is in — config, trips, drafts, inbox", () => {
   assert.equal(inSync("inbox/media/abc123.jpg.meta.json"), true);
 });
 
+test("the figure library is in — fernscout B1776", () => {
+  // Journal content the instance holds and the folder could not mirror: they
+  // travelled in neither direction, so a hosted owner had no copy of their own
+  // figures and restoring one was a hand job.
+  assert.equal(inSync("figures/walker-1.json"), true);
+  assert.equal(inSync("FIGURES/walker-1.JSON"), true);
+  // The folder holds documents and nothing else — no preview, no stray image.
+  assert.equal(inSync("figures/walker-1.png"), false);
+  assert.equal(inSync("figures"), false);
+  assert.equal(inSync("figures/nested/walker-1.json"), false);
+});
+
 test("nothing climbs out, and no dotfile travels", () => {
   assert.equal(inSync("../../etc/passwd"), false);
   assert.equal(inSync("/etc/passwd"), false);

@@ -34,6 +34,7 @@
 // as `<user>-v2` (or wherever `--into` says), so the original folder is still
 // there to compare against and to fall back to.
 import { readdirSync, readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, statSync } from "node:fs";
+import { FALLBACK_RESERVED_SOURCES } from "./api.mjs";
 import { join, extname, basename } from "node:path";
 import { createHash } from "node:crypto";
 import { parseFrontmatter } from "./frontmatter.mjs";
@@ -137,10 +138,12 @@ function convertDay(file, raw, tripId, where) {
   }
 
   // Weather: the server's own reading cannot be re-sent, so the day asks for
-  // the lookup again. Anybody else's reading travels whole.
+  // the lookup again. Anybody else's reading travels whole. Which names are
+  // the server's own is not typed here — a converter has no instance to ask,
+  // so it uses the one fallback copy in `api.mjs` (B1782).
   if (data.weatherData && typeof data.weatherData === "object") {
     const source = String(data.weatherData.source ?? "").toLowerCase();
-    if (source === "open-meteo") {
+    if (FALLBACK_RESERVED_SOURCES.some((name) => name.toLowerCase() === source)) {
       day.weather = true;
       note(`${tripId}/${slug}: the archive's own reading cannot be re-sent — the day asks for it again (weather: true)`);
     } else {

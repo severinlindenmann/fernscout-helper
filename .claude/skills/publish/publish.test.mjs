@@ -26,7 +26,7 @@
 //                       does not happen twice.
 //   dry run             asks, prints, writes nothing.
 import { createServer } from "node:http";
-import { rmSync, mkdtempSync, writeFileSync, mkdirSync, readFileSync } from "node:fs";
+import { rmSync, mkdtempSync, writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { execFile } from "node:child_process";
@@ -47,6 +47,7 @@ const content = mkdtempSync(join(tmpdir(), "fernscout-publish-test-"));
 const USER = "ana";
 const TRIP = "alps";
 const DAY = "2026-08-26-hoi-an";
+const FIGURE = "walker-1";
 const PHOTO = Buffer.from("not really a jpeg, but bytes are bytes");
 const HASH = createHash("sha256").update(PHOTO).digest("hex").slice(0, 32);
 const SRC = `/media/${TRIP}/${DAY}/${HASH}.jpg`;
@@ -90,6 +91,8 @@ const seen = [];
 let journalDoc = { username: USER, title: "Ana", owner: { name: "Ana B", nickname: "Ana", email: "ana@example.test" } };
 let dayDoc = null;
 let tripDoc = null;
+let figureDoc = null;
+let manifest = [];
 let incomplete = false;
 
 function body(req) {
@@ -111,7 +114,12 @@ const server = createServer(async (req, res) => {
   };
 
   if (path === "/api/v2/status") {
-    return json(200, { capabilities: {}, limits: { itemsPerDay: 40, imageMaxBytes: 1000000 }, media: {} });
+    return json(200, {
+      capabilities: {}, limits: { itemsPerDay: 40, imageMaxBytes: 1000000 }, media: {},
+      // B1783: the one source name a caller may never write, published where
+      // a caller reads before it writes.
+      weather: { reservedSources: ["open-meteo"] },
+    });
   }
   if (path === "/api/v2/openapi.json") {
     return json(200, {
@@ -144,6 +152,23 @@ const server = createServer(async (req, res) => {
       return json(200, journalDoc, '"journal-1"');
     }
     return json(200, journalDoc, '"journal-1"');
+  }
+
+  // The figure library: GET, PUT and DELETE, and no PATCH — the instance's own
+  // shape (app/api/v2/[user]/figures/[id]/route.ts). A PATCH here answers 405,
+  // which is what B1774 was.
+  if (path === `/api/v2/${USER}/figures/${FIGURE}`) {
+    if (req.method === "GET") return figureDoc ? json(200, figureDoc, '"figure-1"') : json(404, { error: "no_such_figure" });
+    if (req.method !== "PUT") return json(405, { error: "method_not_allowed" });
+    if (figureDoc && !req.headers["if-match"]) {
+      return json(409, { error: "stale_document", message: "Read it back, then PUT again with If-Match." });
+    }
+    figureDoc = JSON.parse(String(await body(req)));
+    return json(figureDoc ? 200 : 201, figureDoc, '"figure-1"');
+  }
+
+  if (path === `/api/v2/${USER}/sync/manifest`) {
+    return json(200, { files: manifest.map((p) => ({ path: p, size: 1, hash: `remote-${p}` })) });
   }
 
   const tripPath = `/api/v2/${USER}/trips/${TRIP}`;
@@ -290,6 +315,73 @@ async function run(args = []) {
     !/"weather"\s*:/.test(readFileSync(join(content, USER, `trips/${TRIP}/entries/${DAY}.json`), "utf8")),
   );
   incomplete = false;
+}
+
+// ── B1774: a figure is corrected through the door it has ─────────────────
+{
+  write(`figures/${FIGURE}.json`, { id: FIGURE, kind: "walker", name: "Ana", palette: "cream" });
+  seen.length = 0;
+  const { out, code } = await run(["--drafts"]);
+  check("B1774: a figure that is not there is created", code === 0 && figureDoc?.name === "Ana", out);
+  check("B1774: with PUT", seen.includes(`PUT /api/v2/${USER}/figures/${FIGURE}`), seen.join(", "));
+
+  seen.length = 0;
+  const again = await run(["--drafts"]);
+  check("B1774: a second run does not write an unchanged figure at all",
+    again.code === 0 && !seen.some((s) => s.startsWith(`PUT /api/v2/${USER}/figures/`)), seen.join(", "));
+  check("B1774: and says so rather than claiming a correction", /unchanged {5}figure/.test(again.out), again.out);
+
+  write(`figures/${FIGURE}.json`, { id: FIGURE, kind: "walker", name: "Ana B", palette: "cream" });
+  seen.length = 0;
+  const changedRun = await run(["--drafts"]);
+  check("B1774: a figure that really changed is replaced, with PUT and never PATCH",
+    changedRun.code === 0 && figureDoc?.name === "Ana B"
+      && seen.includes(`PUT /api/v2/${USER}/figures/${FIGURE}`)
+      && !seen.some((s) => s.startsWith(`PATCH /api/v2/${USER}/figures/`)),
+    `${changedRun.out}\n${seen.join(", ")}`);
+}
+
+// ── B1782: a reading the server made goes back as the ask ────────────────
+{
+  const entryPath = `trips/${TRIP}/entries/${DAY}.json`;
+  const onDisk = JSON.parse(readFileSync(join(content, USER, entryPath), "utf8"));
+  write(entryPath, { ...onDisk, weather: {
+    source: "open-meteo", recordedAt: "2026-08-27T02:00:00.000Z", tempC: 29,
+  } });
+  dayDoc = null;
+  const { out, code } = await run(["--drafts"]);
+  check("B1782: the day is accepted rather than refused by name", code === 0, out);
+  check("B1782: what went up is `weather: true`, not the server's own reading",
+    dayDoc?.weather === true, JSON.stringify(dayDoc?.weather));
+  check("B1782: the run says how many readings it handed back", /handed back|sent back/.test(out), out);
+  check("B1782: the file on disk keeps the reading",
+    JSON.parse(readFileSync(join(content, USER, entryPath), "utf8")).weather?.source === "open-meteo");
+  write(entryPath, onDisk);
+}
+
+// ── B1775: the sync baseline is written for what publish wrote ───────────
+{
+  const baseFile = join(content, USER, ".fernscout-sync.json");
+  rmSync(baseFile, { force: true });
+  manifest = [`trips/${TRIP}/entries/${DAY}.json`, `trips/${TRIP}/trip.json`, "config.json"];
+  dayDoc = null; tripDoc = null;
+  const { out, code } = await run(["--drafts"]);
+  check("B1775: the run succeeds", code === 0, out);
+  const base = JSON.parse(readFileSync(baseFile, "utf8"));
+  check("B1775: the day it wrote is recorded as agreed — otherwise a sync down calls it a conflict",
+    !!base.files?.[`trips/${TRIP}/entries/${DAY}.json`], JSON.stringify(base.files));
+  check("B1775: with both sides remembered, since a typed route normalises what it is given",
+    base.files?.[`trips/${TRIP}/entries/${DAY}.json`]?.remote === `remote-trips/${TRIP}/entries/${DAY}.json`,
+    JSON.stringify(base.files));
+  check("B1775: and it says so", /Sync state updated/.test(out), out);
+
+  // Invoked by a sync, the baseline is the sync's to write.
+  const changedList = join(content, "changed.json");
+  writeFileSync(changedList, JSON.stringify([`trips/${TRIP}/entries/${DAY}.json`]));
+  rmSync(baseFile, { force: true });
+  const viaSync = await run(["--drafts", "--changed", changedList]);
+  check("B1775: publish run by a sync leaves the baseline to the sync",
+    !existsSync(baseFile), viaSync.out);
 }
 
 await new Promise((resolve) => server.close(resolve));
