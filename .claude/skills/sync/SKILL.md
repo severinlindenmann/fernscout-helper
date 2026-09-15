@@ -117,6 +117,20 @@ then recorded that both sides agreed. The next pull saw nothing to bring back
 either, and an owner's renamed journal was gone for good. The journal has a
 door now; this is for whatever the next one is.
 
+**A push that would say nothing is not a push — B1787.** `weather` is the one
+field where what the instance *answers* is not something a caller may *send*: a
+day written `weather: true` comes back carrying a reading sourced `open-meteo`,
+and every write route refuses that name. So a folder that has been through
+`convert.mjs` holds the ask where the site holds the answer, the two can never
+be byte-identical, and the compare is right to call that a local change — but
+sending it changes nothing on the site, which the guard above then reads as a
+push that did not land. 139 files on one real journal, planned again on every
+run, for ever. Before anything moves, each planned push of a `.json` document
+is compared with the site's own copy through the same normalisation publish
+uses; when the two say the same thing, the site's copy is taken instead, the
+run says so, and both sides are recorded as agreeing. A document that differs
+in anything else is pushed exactly as before.
+
 **There is no file `PUT` on the instance, and that is deliberate.** A raw byte
 door onto a day would bypass every validator there is — the required fields,
 the transport modes, the currency codes, the rule that every declared locale

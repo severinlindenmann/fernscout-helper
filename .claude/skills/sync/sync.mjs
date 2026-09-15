@@ -44,12 +44,12 @@
 // to an owner with no filesystem to fetch the masters from. A first pull is
 // now as large as the journal really is; a second one carries only what the
 // hashes say changed.
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { arg, has } from "../shared/lib.mjs";
-import { SITE, call, token } from "../shared/api.mjs";
+import { SITE, call, reservedSources, sameAsWritten, token } from "../shared/api.mjs";
 import { CONTENT } from "../shared/journal.mjs";
 import {
   contentHash, deletionRefusal, localManifest, plan, readBase, writeBase,
@@ -92,6 +92,32 @@ const base = readBase(dir);
 const local = localManifest(dir, base.files);
 
 /**
+ * One file of the site's copy, verified against the hash the manifest gave.
+ *
+ * Both legs go through here: the down leg writes what it gets, and the up leg
+ * reads it to find out whether a push would say anything the site does not
+ * already say. A transfer that quietly truncated is exactly the failure a
+ * mirror must not inherit, so the check is not optional in either.
+ */
+async function fetchFile(path) {
+  // ponytail: one request per file, which is right for the incremental case
+  // this exists for and is a lot of round trips on a first sync of a large
+  // journal. `/<user>/export.zip` is the bulk door if that ever bites —
+  // byte-faithful for everything it carries, minus `track.json`, which it
+  // ships and the manifest excludes.
+  const response = await fetch(`${SITE}/api/v2/${user}/sync/file/${path.split("/").map(encodeURIComponent).join("/")}`, {
+    headers: { authorization: `Bearer ${token()}` },
+  });
+  if (!response.ok) die(`GET …/sync/file/${path} — ${response.status}. Nothing further was fetched.`);
+  const body = Buffer.from(await response.arrayBuffer());
+  const got = contentHash(body);
+  if (got !== remote[path].hash) {
+    die(`${path} arrived as ${got}, the manifest said ${remote[path].hash}. Nothing further was fetched.`);
+  }
+  return body;
+}
+
+/**
  * Is this side's idea of what belongs in a sync wider than the server's?
  *
  * `inSync()` here is a copy of the rule in the fernscout repo, because there
@@ -128,6 +154,75 @@ if (base.fresh) {
   console.log(`  no previous sync, so this pulls the whole journal — ${bytes(total)}, originals included.`);
 }
 
+// ── a push that would say nothing ──────────────────────────────────────────
+/**
+ * The site already says this, in its own spelling — B1787.
+ *
+ * `weather` is the one field where what the instance **answers** is not
+ * something a caller may **send**: a day written `weather: true` comes back
+ * carrying a reading sourced `open-meteo`, and every write route refuses that
+ * name by design. A folder that has been through `convert.mjs` therefore holds
+ * the ask where the site holds the answer, the two can never be byte-identical,
+ * and `plan()` is right to call that a local change.
+ *
+ * What it is not is a push. On one real journal it was 139 of them: every run
+ * sent 139 corrections that changed nothing on the site, and every run then
+ * reported all 139 as pushes that did not land — because `landed()` asks
+ * whether the remote hash moved, and a write that says what is already there
+ * moves nothing. So the baseline was never recorded and the next run planned
+ * exactly the same 139. It never settled.
+ *
+ * `sameAsWritten` folds both sides through `asWritten` — the ask and the
+ * answer it produced are one document — and folds out key order, which the
+ * typed routes normalise anyway. When the two agree there is nothing to send,
+ * so the site's copy is taken instead: the folder becomes the mirror it is
+ * supposed to be, and the run records that both sides agree, which is the only
+ * thing that makes the next one quiet.
+ *
+ * It never adopts over a real edit. Two documents that differ in any field but
+ * a reading the server made itself are not the same document, and are pushed
+ * exactly as before.
+ */
+let reserved = null;
+async function adoptAlreadyOnTheSite(candidates) {
+  const taken = [];
+  for (const path of candidates) {
+    // `.json` because it is a document on both sides; a photograph that
+    // differs in bytes differs, and there is nothing to normalise about it.
+    if (!path.endsWith(".json")) continue;
+    let theirs;
+    let ours;
+    let body;
+    try {
+      body = await fetchFile(path);
+      theirs = JSON.parse(body.toString("utf8"));
+      ours = JSON.parse(readFileSync(join(dir, path), "utf8"));
+    } catch {
+      continue;   // unreadable or not a document — leave it to publish
+    }
+    reserved ??= await reservedSources();
+    if (!sameAsWritten(ours, theirs, reserved.sources)) continue;
+    for (const a of actions) if (a.path === path) a.action = "settled";
+    taken.push({ path });
+    if (!dry) writeFileSync(join(dir, path), body);
+  }
+  return taken;
+}
+
+// Both legs and before the conflict check, because every way in was wrong:
+// `down --prefer-remote` left these files exactly as they were, `up` called
+// every one of them a local change, and a folder with no baseline for them —
+// which is what a converted folder is — read the two spellings as two people
+// editing one day and stopped the whole run.
+const settledHere = await adoptAlreadyOnTheSite(
+  // Every path both sides hold and spell differently — not only the ones the
+  // plan picked out. A baseline that remembers both spellings hides the rest
+  // of them: nothing is planned, nothing is wrong, and the folder quietly is
+  // not the mirror it is supposed to be. Once taken they stop differing, so
+  // the cost is one pass over a converted journal and nothing afterwards.
+  Object.keys(local).filter((path) => remote[path] && remote[path].hash !== local[path].hash),
+);
+
 // ── conflicts ──────────────────────────────────────────────────────────────
 let conflicts = of("conflict");
 if (conflicts.length && (preferLocal || preferRemote)) {
@@ -160,6 +255,22 @@ console.log(
   (direction === "down" ? `, local-only ${pushes.length}` : `, site-only ${pulls.length}`),
 );
 for (const a of moving) console.log(`    ${direction === "down" ? "↓" : "↑"} ${a.path}  — ${a.reason}`);
+
+if (settledHere.length) {
+  const one = settledHere.length === 1;
+  console.log(
+    `\n  ${settledHere.length} file${one ? "" : "s"} already ${one ? "says" : "say"} on the site what ` +
+    `${one ? "it says" : "they say"} here, once the fields the site owns — a reading it made itself, ` +
+    `whether a day is published — are counted as what this side can actually send. ` +
+    `${dry ? "The site's copy would be taken" : "The site's copy was taken"} rather than sending a ` +
+    `correction that changes nothing.`,
+  );
+  if (reserved?.fallback) {
+    console.log(`    (this instance does not publish which source names are its own, so "open-meteo" was assumed — see /api/v2/status)`);
+  }
+  for (const a of settledHere) console.log(`    = ${a.path}`);
+}
+
 
 /**
  * Deletions, each side treated as what it actually is.
@@ -205,23 +316,7 @@ if (dry) {
 // ── do it ──────────────────────────────────────────────────────────────────
 if (direction === "down") {
   for (const a of pulls) {
-    // ponytail: one request per file, which is right for the incremental case
-    // this exists for and is a lot of round trips on a first sync of a large
-    // journal. `/<user>/export.zip` is the bulk door if that ever bites —
-    // byte-faithful for everything it carries, minus `track.json`, which it
-    // ships and the manifest excludes.
-    const response = await fetch(`${SITE}/api/v2/${user}/sync/file/${a.path.split("/").map(encodeURIComponent).join("/")}`, {
-      headers: { authorization: `Bearer ${token()}` },
-    });
-    if (!response.ok) die(`GET …/sync/file/${a.path} — ${response.status}. Nothing further was fetched.`);
-    const body = Buffer.from(await response.arrayBuffer());
-    // Verified rather than assumed: the manifest said what these bytes hash
-    // to, and a transfer that quietly truncated is exactly the failure a
-    // mirror must not inherit.
-    const got = contentHash(body);
-    if (got !== remote[a.path].hash) {
-      die(`${a.path} arrived as ${got}, the manifest said ${remote[a.path].hash}. Nothing further was fetched.`);
-    }
+    const body = await fetchFile(a.path);
     mkdirSync(dirname(join(dir, a.path)), { recursive: true });
     writeFileSync(join(dir, a.path), body);
   }
@@ -337,7 +432,12 @@ if (stalled.length) {
 }
 
 const pending = new Set([...actions.map((a) => a.path), ...stalled.map((a) => a.path)]);
-const moved = new Set(moving.filter((a) => direction === "down" || landed(a)).map((a) => a.path));
+// A path this run settled by taking the site's copy is done, and recording it
+// is the whole point: without it the next run plans the same push again.
+const moved = new Set([
+  ...moving.filter((a) => direction === "down" || landed(a)).map((a) => a.path),
+  ...settledHere.map((a) => a.path),
+]);
 const files = { ...base.files };
 for (const path of new Set([...Object.keys(here), ...Object.keys(settled)])) {
   if (pending.has(path) && !moved.has(path)) continue;

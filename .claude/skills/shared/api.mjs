@@ -322,3 +322,59 @@ export function refusal(result) {
   }
   return lines.join("\n");
 }
+
+/**
+ * The same document twice, once written down by each side — B1787.
+ *
+ * `weather` is the one field where what the instance **answers** is not
+ * something a caller may **send**: a day written with `weather: true` comes
+ * back carrying a reading sourced `open-meteo`, and every write route refuses
+ * that name. So the two sides of a synced folder hold two spellings of one
+ * fact and can never be byte-identical — which made `sync up` plan the same
+ * 139 pushes on every run of one real journal, each of them a write that would
+ * change nothing on the site, and each reported afterwards as a push that did
+ * not land.
+ *
+ * `asWritten` on both sides is what makes them comparable: the ask and the
+ * answer it produced are one document. Key order is folded out too, because
+ * the typed routes normalise what they are given and a re-ordered key is not
+ * an edit.
+ *
+ * Arrays keep their order — a day's photographs are a sequence and a
+ * different sequence is a different day.
+ */
+export function sameAsWritten(a, b, sources) {
+  return canonical(writable(a, sources)) === canonical(writable(b, sources));
+}
+
+/**
+ * `weather` is not the only field the server owns — `status` is the other, and
+ * a folder synced down holds both of them in the site's spelling.
+ *
+ * A day states it arrives as a draft: `status: "draft"` is the only writable
+ * value and publishing is its own call, so a stored `"published"` is something
+ * the site says and a caller cannot. Saying it back changes nothing there —
+ * the instance drops the echo — so two documents that differ only in it say
+ * the same thing to a writer, and a folder that has been through `convert.mjs`
+ * says `draft` where the site says `published` for exactly the same reason it
+ * says `weather: true` where the site holds the reading.
+ *
+ * Dropped rather than normalised to one value: which of the two is true is the
+ * site's to say, never this side's, and `status` is not sent as a correction
+ * by anything here.
+ */
+function writable(document, sources) {
+  const { status: _owned, ...rest } = asWritten(document, sources) ?? {};
+  return rest;
+}
+
+function canonical(value) {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort()
+      .filter((key) => value[key] !== undefined)
+      .map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}

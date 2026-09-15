@@ -13,6 +13,7 @@ import { join } from "node:path";
 import {
   contentHash, deletionRefusal, inSync, localManifest, plan, readBase, writeBase,
 } from "../shared/syncManifest.mjs";
+import { sameAsWritten } from "../shared/api.mjs";
 
 let failures = 0;
 const test = (what, fn) => {
@@ -179,6 +180,72 @@ test("a no-base run treats every difference as a conflict rather than a guess", 
   const actions = plan({ base: {}, local: { a: at("1"), b: at("9") }, remote: { a: at("2") } });
   assert.deepEqual(only(actions, "conflict"), ["a"]);
   assert.deepEqual(only(actions, "push"), ["b"]);
+});
+
+console.log("sync — one fact, two spellings");
+
+// ── the one field the two sides spell differently — B1787 ──────────────────
+//
+// A day written `weather: true` comes back carrying a reading sourced
+// `open-meteo`, which no caller may send. So a folder and the site hold two
+// spellings of one fact, `plan()` rightly calls that a local change, and the
+// push that follows changes nothing on the site — which `landed()` then reads
+// as a push that did not land, so the baseline is never written and the next
+// run plans it again. 139 files on one real journal, every run, for ever.
+//
+// This is the question that breaks the loop: would sending this say anything
+// the site does not already say?
+test("the ask and the answer it produced are the same document", () => {
+  const sources = ["open-meteo"];
+  const here = { title: "Hoi An", weather: true };
+  const site = { title: "Hoi An", weather: { source: "open-meteo", tempC: 31.2, summary: "clear" } };
+  assert.equal(sameAsWritten(here, site, sources), true);
+  assert.equal(sameAsWritten(site, here, sources), true);
+});
+
+test("the site's own draft-or-published is the site's to say", () => {
+  // `status: "draft"` is the only value a caller may write; publishing is its
+  // own call. So a folder that says draft where the site says published is not
+  // holding an edit — it is holding a field it cannot send.
+  assert.equal(sameAsWritten(
+    { title: "Davos", status: "draft", weather: true },
+    { title: "Davos", status: "published", weather: { source: "open-meteo", tempMax: 0.4 } },
+    ["open-meteo"],
+  ), true);
+});
+
+test("a re-ordered key is not an edit", () => {
+  // The typed routes normalise what they are given, so the site's copy of a
+  // day this folder wrote is not byte-identical to what was sent.
+  assert.equal(
+    sameAsWritten({ a: 1, b: { c: 2, d: 3 } }, { b: { d: 3, c: 2 }, a: 1 }, ["open-meteo"]),
+    true,
+  );
+});
+
+test("anything else that differs is still a push", () => {
+  const sources = ["open-meteo"];
+  // The title moved. Same weather, different day.
+  assert.equal(sameAsWritten(
+    { title: "Hoi An, again", weather: true },
+    { title: "Hoi An", weather: { source: "open-meteo", tempC: 31.2 } },
+    sources,
+  ), false);
+  // Somebody's own instrument is not the server's, and travels whole — two
+  // different readings are two different documents.
+  assert.equal(sameAsWritten(
+    { weather: { source: "my-station", tempC: 31.2 } },
+    { weather: { source: "my-station", tempC: 18.0 } },
+    sources,
+  ), false);
+  // A reading the server did not make cannot be folded into the ask.
+  assert.equal(sameAsWritten(
+    { weather: true },
+    { weather: { source: "my-station", tempC: 31.2 } },
+    sources,
+  ), false);
+  // Photographs are a sequence; a different sequence is a different day.
+  assert.equal(sameAsWritten({ media: [{ src: "a" }, { src: "b" }] }, { media: [{ src: "b" }, { src: "a" }] }, sources), false);
 });
 
 console.log("sync — the deletion threshold");
