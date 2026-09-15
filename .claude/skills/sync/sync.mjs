@@ -472,6 +472,21 @@ const pending = new Set([...actions.map((a) => a.path), ...stalled.map((a) => a.
 const moved = new Set([
   ...moving.filter((a) => direction === "down" || landed(a)).map((a) => a.path),
   ...settledHere.map((a) => a.path),
+  /**
+   * A prune this run actually carried out is settled too — B1791.
+   *
+   * Without this the path stays `pending` and keeps its old base entry, which
+   * is a lie the moment the site holds that path again: the entry says this
+   * folder once held those bytes, so the next run reads a file the site has
+   * and the folder does not as **a local deletion** and offers to delete it
+   * there. `down` will not pull it and `up` names it for ever — the two legs
+   * disagreeing about one path, which is the thing this file already had to
+   * be fixed for once (B1787).
+   *
+   * Found by walking into it: 18 photographs deleted on the site, pruned here
+   * with `--yes`, then restored on the site, and no sync would bring them back.
+   */
+  ...(direction === "down" && yes ? pruneLocal.map((a) => a.path) : []),
 ]);
 const files = { ...base.files };
 for (const path of new Set([...Object.keys(here), ...Object.keys(settled)])) {
