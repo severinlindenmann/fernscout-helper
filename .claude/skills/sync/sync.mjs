@@ -158,30 +158,44 @@ if (base.fresh) {
 /**
  * The site already says this, in its own spelling — B1787.
  *
- * `weather` is the one field where what the instance **answers** is not
- * something a caller may **send**: a day written `weather: true` comes back
- * carrying a reading sourced `open-meteo`, and every write route refuses that
- * name by design. A folder that has been through `convert.mjs` therefore holds
- * the ask where the site holds the answer, the two can never be byte-identical,
- * and `plan()` is right to call that a local change.
+ * **Two** fields are the site's to say and this side's to hold but not send.
+ * `weather`: a day written `weather: true` comes back carrying a reading
+ * sourced `open-meteo`, and a caller may never claim that name. `status`: a
+ * day states it arrives as a draft, and whether it is published is a separate
+ * call. So a folder that has been synced down, or through `convert.mjs`, holds
+ * the ask where the site holds the answer and `draft` where the site says
+ * `published` — the two sides can never be byte-identical for those days, and
+ * `plan()` is right to call that a difference. 199 files of one real journal
+ * were in that state.
  *
- * What it is not is a push. On one real journal it was 139 of them: every run
- * sent 139 corrections that changed nothing on the site, and every run then
- * reported all 139 as pushes that did not land — because `landed()` asks
- * whether the remote hash moved, and a write that says what is already there
- * moves nothing. So the baseline was never recorded and the next run planned
- * exactly the same 139. It never settled.
+ * What it is not is a push, and every way through this script got that wrong:
+ *
+ * - With no baseline for such a file — which is what a converted folder is —
+ *   one fact in two spellings read as two people editing one day, and the
+ *   whole run **stopped** on a conflict that was not one.
+ * - With `--prefer-local` it was sent, and the correction changed nothing on
+ *   the site except to re-run the weather lookup and move its `recordedAt`,
+ *   which then made the site's copy differ again and gave the next `down` leg
+ *   something to pull. Round and round, for no content at all.
+ * - `down --prefer-remote` could not reach them: the site's favour resolves
+ *   conflicts, and a file the baseline remembers on both sides is not one. It
+ *   stayed a local change no matter which way the sync was run.
+ *
+ * And a baseline that remembers both spellings hides the rest: nothing is
+ * planned, nothing is wrong, and the folder quietly is not the mirror it is
+ * supposed to be. That is why the candidates are every document the two sides
+ * spell differently rather than the ones the plan picked out.
  *
  * `sameAsWritten` folds both sides through `asWritten` — the ask and the
- * answer it produced are one document — and folds out key order, which the
- * typed routes normalise anyway. When the two agree there is nothing to send,
- * so the site's copy is taken instead: the folder becomes the mirror it is
- * supposed to be, and the run records that both sides agree, which is the only
- * thing that makes the next one quiet.
+ * answer it produced are one document — drops the site-owned `status`, and
+ * folds out key order, which the typed routes normalise anyway. When the two
+ * agree there is nothing to send, so the site's copy is taken instead: the
+ * folder becomes the mirror it is supposed to be, and the run records that
+ * both sides agree.
  *
- * It never adopts over a real edit. Two documents that differ in any field but
- * a reading the server made itself are not the same document, and are pushed
- * exactly as before.
+ * It never adopts over a real edit. Two documents differing in any field the
+ * site does not own are not the same document, and are pushed exactly as
+ * before.
  */
 let reserved = null;
 async function adoptAlreadyOnTheSite(candidates) {

@@ -117,19 +117,25 @@ then recorded that both sides agreed. The next pull saw nothing to bring back
 either, and an owner's renamed journal was gone for good. The journal has a
 door now; this is for whatever the next one is.
 
-**A push that would say nothing is not a push — B1787.** `weather` is the one
-field where what the instance *answers* is not something a caller may *send*: a
-day written `weather: true` comes back carrying a reading sourced `open-meteo`,
-and every write route refuses that name. So a folder that has been through
-`convert.mjs` holds the ask where the site holds the answer, the two can never
-be byte-identical, and the compare is right to call that a local change — but
-sending it changes nothing on the site, which the guard above then reads as a
-push that did not land. 139 files on one real journal, planned again on every
-run, for ever. Before anything moves, each planned push of a `.json` document
-is compared with the site's own copy through the same normalisation publish
-uses; when the two say the same thing, the site's copy is taken instead, the
-run says so, and both sides are recorded as agreeing. A document that differs
-in anything else is pushed exactly as before.
+**A push that would say nothing is not a push — B1787.** Two fields are the
+site's to say and this folder's to hold but not send: a `weather` reading
+sourced `open-meteo`, which no caller may claim, and `status`, because a day
+states it arrives as a draft and publishing is its own call. A folder that has
+been synced down, or through `convert.mjs`, therefore holds the ask where the
+site holds the answer and `draft` where the site says `published` — and the two
+sides can never be byte-identical for those days. Every way through this script
+got that wrong: with no baseline for such a file the run **stopped** on a
+conflict that was one fact in two spellings; `--prefer-local` sent a correction
+that changed nothing except to re-run the weather lookup and move its
+`recordedAt`, giving the next pull something to fetch; and `down
+--prefer-remote` could not reach them at all. 199 files of one real journal
+were in that state.
+
+So before anything moves, every document the two sides spell differently is
+compared through the normalisation a writer would apply. When the two say the
+same thing there is nothing to send: the site's copy is taken, the run names
+what it took, and both sides are recorded as agreeing. A document that differs
+in any field the site does not own is pushed exactly as before.
 
 **There is no file `PUT` on the instance, and that is deliberate.** A raw byte
 door onto a day would bypass every validator there is — the required fields,
