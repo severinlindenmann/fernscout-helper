@@ -18,8 +18,11 @@
 //   content/<user>/figures/<id>.json
 //   content/<user>/trips/<trip>/trip.json            costs and plan are sections of it
 //   content/<user>/trips/<trip>/entries/<YYYY-MM-DD-slug>.json
-//   content/<user>/trips/<trip>/media/<day-slug>/<hash>.<ext>  + .meta.json sidecars
+//   content/<user>/trips/<trip>/media/<day-slug>/<hash>.<ext>
 //   content/<user>/trips/<trip>/originals/<day-slug>/<name>    the print masters
+//   content/<user>/trips/<trip>/meta/<day-slug>/<hash>.<ext>.meta.json
+//                                  the instance's own sidecars, outside media/
+//                                  since fernscout B1863 so no URL reaches them
 //
 // A folder written by the old tools is converted once — `node
 // .claude/skills/shared/convert.mjs <user>` — rather than read by a second
@@ -108,7 +111,9 @@ export function readDocument(path) {
 
 /** Files that are documents rather than the directory's furniture. Sidecars
  * (`<name>.jpg.meta.json`) are the instance's own notes about a photograph,
- * not documents in their own right, and are read through `mediaSidecar`. */
+ * not documents in their own right. Since fernscout B1863 they live under
+ * `trips/<trip>/meta/`, not beside the photograph; the filter stays for a
+ * folder written before that moved them. */
 function jsonFiles(dir) {
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
@@ -195,13 +200,4 @@ export function mediaFile(journal, src) {
   const match = src.match(/^\/media\/([^/]+)\/(.+)$/);
   if (!match) return null;
   return join(journal.dir, "trips", match[1], "media", match[2]);
-}
-
-/** The sidecar the instance writes beside a stored photograph — what the file
- * was called before it was renamed to its hash, its dimensions, its type. Read
- * when it is there and simply absent when it is not; nothing is inferred from
- * its absence. */
-export function mediaSidecar(file) {
-  const read = readDocument(`${file}.meta.json`);
-  return read?.document ?? null;
 }

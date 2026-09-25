@@ -26,8 +26,10 @@ else say "sips" "✗ missing — makes the small preview images"; ok=1; fi
 if have exiftool; then say "exiftool" "✓ $(exiftool -ver)"
 else say "exiftool" "✗ missing — without it the photos lose their GPS location"; missing+=(exiftool); ok=1; fi
 
-if have ffmpeg; then say "ffmpeg" "✓ optional, for video"
-else say "ffmpeg" "· optional, only needed for video clips"; fi
+# Not needed to export, review or build — but describe.mjs refuses to run
+# without it (it assembles the contact sheets), and --videos needs it too.
+if have ffmpeg; then say "ffmpeg" "✓ for contact sheets (describe.mjs) and video clips"
+else say "ffmpeg" "· missing — needed for contact sheets (describe.mjs) and for keeping video clips; brew install ffmpeg"; fi
 
 echo
 if ((ok == 0)); then

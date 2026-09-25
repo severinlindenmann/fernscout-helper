@@ -158,7 +158,6 @@ for (const [day, list] of Object.entries(byDay).sort()) {
     tags: "no tags were applied to this day",
     translations: "no translation was written for this day",
     visibility: "this day is as open as the trip it belongs to",
-    weather: "no weather reading was taken; ask the server for one by sending weather: true",
   };
   // B1769: `time` was declined unconditionally while `time:` was also set, and
   // the instance refuses a section that is "there and consciously absent at
@@ -167,8 +166,18 @@ for (const [day, list] of Object.entries(byDay).sort()) {
   if (!first.time) declined.time = "the time of day was not recorded beyond the photographs' own";
   if (!place) declined.location = "no place name came with these photographs";
   if (!country) declined.country = "no country came with these photographs";
-  declined.countryCode = "no country code is written here — a wrong flag is worse than no flag";
+  // B1907: the instance derives `countryCode` from `country` itself, at the
+  // door and before it asks what is missing — but only while the code is not
+  // declined. So the decline is written only where there is no country to
+  // derive from. A name its table does not know (Photos speaks the Mac's own
+  // language, the table is English) comes back `422 incomplete` naming
+  // `countryCode`, which is a question for the person, not for this script.
+  if (!country) declined.countryCode = "no country came with these photographs, so there is no code either";
   if (!withGps) declined.coordinates = "none of these photographs carried a position";
+  // Weather is looked up, never filled in (B1713): a day with a position asks
+  // the instance to find it in the public archive, inside the write itself.
+  // A day without one has nothing to look up, and says so.
+  if (!withGps) declined.weather = "no position came with these photographs, so there is no weather to look up";
   if (!gallery.length) declined.media = "no photographs were kept for this day";
 
   const document = {
@@ -179,10 +188,11 @@ for (const [day, list] of Object.entries(byDay).sort()) {
     ...(place ? { location: place } : {}),
     // The name as Photos gives it, which is the Mac's own language — the
     // journal may be written in another one. No `countryCode`: mapping a name
-    // to ISO 3166 is a table this repository would have to keep, and a wrong
-    // flag is worse than no flag.
+    // to ISO 3166 is a table this repository would have to keep, and the
+    // instance already keeps one (B1907) and fills the code in on write.
     ...(country ? { country } : {}),
     ...(withGps ? { coordinates: { lat: withGps.lat, lng: withGps.lng } } : {}),
+    ...(withGps ? { weather: true } : {}),
     ...(gallery.length
       ? {
           media: gallery.map((g) => ({

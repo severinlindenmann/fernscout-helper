@@ -12,10 +12,11 @@
 // the trip's whole spend and days carried their own besides, so the two could
 // and did hold the same money twice — one real folder's `costs.md` was
 // line-for-line what its days already said, and publishing both reported the
-// trip at double. In v2 a trip's `costs.items` is **preparation only**: what
-// was paid before leaving. Everything spent on the trip belongs to the day it
-// was spent on. So `--before` is the flights and the deposit, and everything
-// else wants a `--day`.
+// trip at double. In v2 a trip's `costs.items` is spend that belongs to no
+// day: what was paid before leaving, and (since B1844) statement rows whose
+// date has no day written. Everything spent on a day belongs to that day. So
+// `--before` is the flights and the deposit, and everything else wants a
+// `--day`.
 import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { ROOT, arg, has, die, argv } from "../shared/lib.mjs";
@@ -64,11 +65,13 @@ const entryFor = (date) => {
 if (verb === "add") {
   const label = arg("label") ?? die("--label is required.");
   const amount = Number(arg("amount"));
-  if (!Number.isFinite(amount)) die("--amount must be a number.");
-  const category = arg("category") ?? "other";
-  if (!CATEGORIES.includes(category)) die(`--category must be one of: ${CATEGORIES.join(", ")}`);
+  if (!Number.isFinite(amount) || amount <= 0) die("--amount must be a positive number.");
+  // No default: a category is the person's to say, and the instance accepts a
+  // cost without one rather than a guessed "other".
+  const category = arg("category");
+  if (category && !CATEGORIES.includes(category)) die(`--category must be one of: ${CATEGORIES.join(", ")}`);
   const currency = arg("currency");
-  const cost = { label, amount, ...(currency ? { currency } : {}), category };
+  const cost = { label, amount, ...(currency ? { currency } : {}), ...(category ? { category } : {}) };
 
   if (has("before")) {
     const doc = read(tripFile);
@@ -79,7 +82,7 @@ if (verb === "add") {
     if (doc.declined?.costs) delete doc.declined.costs;
     if (doc.declined && !Object.keys(doc.declined).length) delete doc.declined;
     write(tripFile, doc);
-    console.log(`Added to the trip's preparation costs: ${label}, ${amount} ${currency ?? ""} (${category})`);
+    console.log(`Added to the trip's preparation costs: ${label}, ${amount} ${currency ?? ""} (${category ?? "no category"})`);
   } else {
     const date = arg("day") ?? die("--day YYYY-MM-DD, or --before for something paid before the trip.");
     const file = entryFor(date) ?? die(`No day for ${date}. Write the day first, or use --before.`);
@@ -89,22 +92,30 @@ if (verb === "add") {
     if (doc.declined?.costs) delete doc.declined.costs;
     if (doc.declined && !Object.keys(doc.declined).length) delete doc.declined;
     write(path, doc);
-    console.log(`Added to ${file}: ${label}, ${amount} ${currency ?? ""} (${category})`);
+    console.log(`Added to ${file}: ${label}, ${amount} ${currency ?? ""} (${category ?? "no category"})`);
   }
   process.exit(0);
 }
 
 if (verb === "budget") {
   const total = Number(arg("total"));
-  const days = Number(arg("days"));
-  const currency = arg("currency") ?? "CHF";
-  if (!Number.isFinite(total) || !Number.isFinite(days)) die("--total and --days must be numbers.");
+  const days = arg("days") === undefined ? undefined : Number(arg("days"));
+  // Absent means the journal's base currency, on the instance — not a guess here.
+  const currency = arg("currency");
+  if (!Number.isFinite(total) || total <= 0) die("--total must be a positive number.");
+  if (days !== undefined && !(Number.isInteger(days) && days > 0)) die("--days must be a whole number of days.");
   const doc = read(tripFile);
-  doc.costs = { ...(doc.costs ?? {}), budget: { total, days, currency } };
+  doc.costs = {
+    ...(doc.costs ?? {}),
+    budget: { total, ...(days ? { days } : {}), ...(currency ? { currency } : {}) },
+  };
   if (doc.declined?.costs) delete doc.declined.costs;
   if (doc.declined && !Object.keys(doc.declined).length) delete doc.declined;
   write(tripFile, doc);
-  console.log(`Budget: ${total} ${currency} over ${days} days.`);
+  console.log(
+    `Budget: ${total} ${currency ?? "(the journal's base currency)"} over ` +
+      `${days ? `${days} days` : "the trip's own days"}.`,
+  );
   process.exit(0);
 }
 

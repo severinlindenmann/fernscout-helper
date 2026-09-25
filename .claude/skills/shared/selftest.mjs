@@ -66,7 +66,12 @@ const CALLS = [
   ["GET", "/api/v2/{user}/figures/{id}", "publish: is this figure already there"],
   ["GET", "/api/v2/{user}/sync/manifest", "sync: what the site holds, hashed"],
   ["GET", "/api/v2/{user}/sync/file/{path}", "sync: one file's bytes"],
-  ["POST", "/api/v2/{user}/import", "gps-history, statement-costs: hand a file to the instance"],
+  ["PATCH", "/api/v2/{user}", "publish: the journal's own settings"],
+  ["POST", "/api/v2/{user}/import", "gps-history: read a staged location history into the store"],
+  ["POST", "/api/v2/{user}/trips/{trip}/track", "gps-history: draw one trip's line"],
+  ["DELETE", "/api/v2/{user}/inbox/{id}", "gps-history: the staged export, once it is read"],
+  ["GET", "/api/v2/{user}/statements/{src}", "statement-costs: read a staged statement"],
+  ["POST", "/api/v2/{user}/trips/{trip}/costs/apply", "statement-costs: write the agreed rows"],
 ];
 
 let contract = null;

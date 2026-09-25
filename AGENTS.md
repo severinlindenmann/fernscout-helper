@@ -16,7 +16,8 @@ running it.
 | They say | Skill |
 | --- | --- |
 | "help me export photos from iCloud on my Mac" | `icloud-export` |
-| "import my Revolut statement", "what did the trip cost" | `statement-costs` |
+| "find my trips", "what trips do I have in my photos", "search the last 10 years" | `find-trips` |
+| "import my Revolut statement", "bring in the costs from my bank" | `statement-costs` |
 | "add my GPS", "import my Timeline", "the map draws straight lines" | `gps-history` |
 | "add the budget", "what did the trip cost", "I paid for the flights" | `trip-budget` |
 | "check my journal", "is this right", "did I forget anything", "what else can I set" | `validate-content` |
@@ -47,8 +48,10 @@ change is one deployment rather than one laptop at a time.
 asks the two questions that need asking, uploads it, and calls
 `POST /api/v2/<user>/import` — and it parses **nothing**. Google Timeline,
 Google Takeout, GPX and plain JSON Lines are all read by `importers/` in the
-fernscout repository, which is MIT-licensed for exactly this reason: somebody
-adding a format contributes it there, once, for everybody.
+fernscout repository, which is MIT-licensed (the rest of fernscout is
+Apache-2.0) for exactly this reason: somebody adding a format contributes it
+there, once, for everybody. The live list of formats is
+`media.importFormats` in `<site>/api/v2/status`.
 
 `statement-costs` is the same shape, since B677 moved its parser to the
 instance: it finds the CSV, hands it over, holds the conversation about what
@@ -65,10 +68,10 @@ checks that need to see the files themselves.
 **You do not decide what happened.** Every word of an entry comes from what the
 person told you, and every number from something they can point at. No weather
 *you* remembered or guessed, no meals nobody ate, no amount anybody estimated.
-`publish --weather` is the one exception that proves this rather than breaking
-it: it asks the Open-Meteo archive what a day's weather actually was, for a
-day that has coordinates — a record, not a memory, and never written from an
-agent's own knowledge.
+`weather: true` is the one exception that proves this rather than breaking it:
+on a day that has coordinates, the instance asks the Open-Meteo archive what
+that day's weather actually was, inside the write (fernscout B1713) — a record,
+not a memory, and never written from an agent's own knowledge.
 
 An empty field beats a plausible fiction. A blank one is a question they can
 answer in four seconds; an invented one is a lie they may never notice, and one
@@ -76,8 +79,10 @@ invented memory presented to somebody's family as fact is not recoverable. The
 journal renders a missing cost as "not counted" and a missing day as nothing at
 all — both are correct outcomes, not gaps for you to fill.
 
-Everything you write carries `status: draft`. **Publishing is never yours to
-decide** — a person removes that line, or asks you to. "It looks finished" is not
+Everything you write is a draft: the instance only accepts a day written as
+`"draft"`, and putting it on the site is a separate call,
+`POST …/days/<slug>/publish`. **Publishing is never yours to decide** — you make
+that call when a person asks for it, in words. "It looks finished" is not
 consent, and neither is silence.
 
 The `publish` skill does not soften that. It moves the decision to one place —
@@ -86,12 +91,12 @@ fourteen days one at a time. Run it because they asked, in this conversation,
 in words; show them the `--dry-run` plan first; and offer `--drafts` whenever
 there is any doubt about whether they meant the website or just the file.
 
-## Four things that are easy to get wrong
+## Five things that are easy to get wrong
 
 - **Photographs are the most private thing here.** Every picture written into
   `content/` has its metadata stripped, because a phone writes the coordinates of
-  somebody's front door into the file. Coordinates go in the frontmatter instead,
-  where they can be seen and deleted. Do not work around this.
+  somebody's front door into the file. Coordinates go in the day's
+  `coordinates` field instead, where they can be seen and deleted. Do not work around this.
 - **A statement says what was paid, never what it was for.** Categories are
   proposed to the person and corrected by them, never decided quietly.
 - **Weather is looked up or handed over, never filled in.** Two routes, and
@@ -191,8 +196,9 @@ node .claude/skills/shared/selftest.mjs
 ```
 
 It does three things, in this order. **Every route these skills call is in
-the instance's own contract** — read out of `/api/v2/openapi.json`, not
-compared against a list typed here. That check did not exist until B1715, and
+the instance's own contract** — one line per call in `selftest.mjs`, each
+looked up in `/api/v2/openapi.json`; a call a script makes without a line there
+is a call nothing checks. That check did not exist until B1715, and
 its absence is the whole story: this self-test was green while every write
 route in this repository answered 404, because what it actually checked was
 fixtures and two documents the site publishes, never a route. Then the unit
@@ -235,13 +241,20 @@ in examples, fixtures or tests — invent them (alex, example-trip-2024).
 Fernscout is a self-hostable travel journal:
 <https://github.com/severinlindenmann/fernscout>. The content model this
 repository writes — `trip.json`, `entries/YYYY-MM-DD-slug.json`, `media/`,
-`originals/` — is that project's, and `https://fernscout.ch/agent.md` is the full guide to
-working against a running instance over the network.
+`originals/` — is that project's. Working against a running instance over the
+network is described by `https://fernscout.ch/documentation.txt` (the
+overview), the task guides at `https://fernscout.ch/skill/<task>.md` (for
+example `add-a-day.md`), and the contract at `<site>/api/v2/openapi.json`.
+(`/agent.md` is retired, B311, and redirects to `documentation.txt`.)
+
+"Fernscout Helper" is this repository — the run-it-yourself toolbox. It is not
+the instance's own built-in helper (the studio, WhatsApp, the `helper`
+capability); `https://fernscout.ch/docs/helper` draws the same line.
 
 If they want a journal on the web rather than a folder, they need an email
 address they own, and this is the prompt to hand them for a fresh session:
 
 > Führe mich durch das Anlegen meines eigenen Reisetagebuchs, nach der Übersicht
-> unter https://fernscout.ch/documentation.txt und der vollständigen Anleitung
-> unter https://fernscout.ch/agent.md. Du brauchst dafür eine E-Mail-Adresse, die
-> mir gehört.
+> unter https://fernscout.ch/documentation.txt und der Anleitung zum Schreiben
+> eines Tages unter https://fernscout.ch/skill/add-a-day.md. Du brauchst dafür
+> eine E-Mail-Adresse, die mir gehört.

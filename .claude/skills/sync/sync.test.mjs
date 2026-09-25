@@ -102,7 +102,18 @@ test("a served photograph is the site's own work; a master and a sidecar are not
   // Not a photograph on a day at all.
   assert.equal(servedDerivative("trips/budapest-2023/entries/2023-07-08-morgen.json"), false);
   assert.equal(servedDerivative("inbox/2023-07/b12e.jpg"), false);
-  assert.equal(servedDerivative("trips/budapest-2023/media/b12e.jpg"), false);
+  assert.equal(servedDerivative("trips/budapest-2023/b12e.jpg"), false);
+});
+
+test("a photograph uploaded without a day is the site's own work too", () => {
+  // The instance files a day-less upload straight under media/ — four
+  // segments, not five. Missing it here is B1789 again: a "local change"
+  // every run that no action clears.
+  assert.equal(servedDerivative("trips/budapest-2023/media/b12e.jpg"), true);
+  assert.equal(servedDerivative("trips/budapest-2023/media/b12e.mp4"), true);
+  assert.equal(servedDerivative("trips/budapest-2023/media/b12e-poster.jpg"), true);
+  assert.equal(servedDerivative("trips/budapest-2023/media/b12e.jpg.meta.json"), false);
+  assert.equal(servedDerivative("trips/budapest-2023/originals/b12e.jpg"), false);
 });
 
 console.log("sync — the three-way compare");

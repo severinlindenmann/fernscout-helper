@@ -221,12 +221,12 @@ export function token() {
   if (!value) {
     throw new Error(
       "No FERNSCOUT_TOKEN. Get one with the six-digit code flow:\n" +
-      `  curl -s -X POST ${SITE}/api/auth/request -H 'content-type: application/json' \\\n` +
-      `       -d '{"user":"<username>","email":"<your address>","kind":"agent"}'\n` +
-      `  curl -s -X POST ${SITE}/api/auth/verify  -H 'content-type: application/json' \\\n` +
-      `       -d '{"user":"<username>","email":"<your address>","code":"123456","kind":"agent"}'\n` +
-      `\n  "kind":"agent" on BOTH calls. Without it you get a guest cookie: 200 OK,\n` +
-      `  no token in the body, and nothing saying you asked for the wrong thing.\n` +
+      `  curl -s -X POST ${SITE}/api/auth/codes -H 'content-type: application/json' \\\n` +
+      `       -d '{"email":"<your address>","for":"write","user":"<username>"}'\n` +
+      `  curl -s -X POST ${SITE}/api/auth/codes/redeem -H 'content-type: application/json' \\\n` +
+      `       -d '{"email":"<your address>","code":"123456","for":"write","user":"<username>"}'\n` +
+      `\n  "for":"write" on BOTH calls — it is what makes the token come back in the\n` +
+      `  body rather than as a cookie.\n` +
       "then  export FERNSCOUT_TOKEN=…  (it lasts seven days).",
     );
   }
@@ -268,10 +268,10 @@ export async function call(method, path, { body, headers = {}, auth = true, ifMa
  * has touched, with a message that says confidently that somebody has. Six
  * days of the demo journal reported as conflicts is how this was found.
  *
- * Stripping the suffix here is a workaround and is marked as one: the fix is
- * on the instance, and this comes out when B1729 lands. It is safe in the
- * meantime because the prefix is exactly what the origin issued — the suffix
- * is added by the proxy, after.
+ * B1729 has since landed on the instance (it accepts the suffixed form), so
+ * this strip is belt and braces now — kept because it is harmless, and a
+ * helper talking to an older self-hosted instance still needs it. The prefix
+ * is exactly what the origin issued; the suffix is added by the proxy, after.
  */
 function etagOf(response) {
   const etag = response.headers.get("etag");
@@ -292,7 +292,7 @@ function etagOf(response) {
  *   section it must either answer or decline. The decline matters as much as
  *   the send — it is the answer for a day that genuinely had none, and the
  *   alternative to inventing one.
- *   `details.current` — a `409 stale_document` hands back the document as it
+ *   `details` — a `409 stale_document` hands back the document as it
  *   stands now, which is what a caller needs in order to retry with
  *   `If-Match`.
  */
@@ -313,12 +313,19 @@ export function refusal(result) {
   const missing = Array.isArray(details.missing) ? details.missing : Array.isArray(b.missing) ? b.missing : [];
   for (const m of missing) {
     if (typeof m === "string") { lines.push(`      ${m}`); continue; }
-    lines.push(`      ${m.field}: ${m.why ?? m.whyRequired ?? ""}`.trimEnd());
-    if (m.send) lines.push(`          send    ${m.send}`);
-    if (m.decline ?? m.toDecline) lines.push(`          or say  ${m.decline ?? m.toDecline}`);
+    // The server's rows are snake_case (`why_required`, `to_decline`,
+    // `to_provide`); the camelCase spellings are what openapi's
+    // `x-required-or-declined` uses, and are read too.
+    lines.push(`      ${m.field}: ${m.why_required ?? m.whyRequired ?? m.why ?? ""}`.trimEnd());
+    const send = m.to_provide ?? m.send;
+    if (send !== undefined) lines.push(`          send    ${typeof send === "string" ? send : JSON.stringify(send)}`);
+    const decline = m.to_decline ?? m.toDecline ?? m.decline;
+    if (decline) lines.push(`          or say  ${decline}`);
   }
-  if (details.current && (details.current.slug || details.current.id)) {
-    lines.push(`      the stored document is ${details.current.slug ?? details.current.id} — read it and send If-Match to replace it`);
+  // A `409 stale_document` carries the stored document as `details` itself.
+  const current = details.current ?? (!Array.isArray(details) ? details : null);
+  if (result.status === 409 && current && (current.slug || current.id)) {
+    lines.push(`      the stored document is ${current.slug ?? current.id} — read it and send If-Match to replace it`);
   }
   return lines.join("\n");
 }

@@ -25,8 +25,10 @@ import { dirname, join } from "node:path";
  * 4000 clears the 2500×3500 a full-page plate wants at 300 dpi. It costs the
  * review page some disk and a slower first run — the honest price of one
  * derivative rather than two, and cheaper than a print nobody can redo.
- * `--max-edge` overrides it; the instance's ceiling is 8000px and 50 MB an
- * image, published in /api/health.
+ * `--max-edge` overrides it; the instance's ceiling is 12000px on the long
+ * edge, 64 megapixels and 50 MB an image (fernscout lib/validate/media.ts),
+ * published at /api/v2/status as `limits.imageMaxEdge`, `limits.imageMaxPixels`
+ * and `limits.imageMaxBytes`.
  */
 export const DEFAULT_MAX_EDGE = 4000;
 

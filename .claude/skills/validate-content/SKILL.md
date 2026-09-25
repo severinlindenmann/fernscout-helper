@@ -9,47 +9,49 @@ description: Check a journal in content/ against the instance that will receive 
 node .claude/skills/validate-content/validate.mjs --user <username>
 ```
 
-It reads every file under `content/<username>/`, compares it against the
-contract the instance itself publishes at `<site>/openapi.json`, and prints
-what it finds. **It changes nothing** — not the files, not the site.
+It reads every file under `content/<username>/`, sends each document through
+the instance's own `?dryRun=true` (checked against the contract it publishes at
+`<site>/api/v2/openapi.json`), and prints what it finds. **It changes nothing**
+— not the files, not the site.
 
 ```
 node validate.mjs                       every journal in content/
 node validate.mjs --user alex             one of them
 node validate.mjs --trip example-trip-2024   one trip
-node validate.mjs --all                 every occurrence, not a count per repeated finding
 node validate.mjs --json                for a program to read
-node validate.mjs --offline             the cached schema, no network
-node validate.mjs --refresh             fetch the schema again now
+node validate.mjs --offline             the disk checks only, no network
 ```
 
 `FERNSCOUT_URL` picks a different instance; it defaults to
-`https://fernscout.ch`. No token is needed — the contract is public.
+`https://fernscout.ch`. A dry run is still a write route, so an online run needs
+the owner's `FERNSCOUT_TOKEN`; `--offline` needs none.
 
-## What the three marks mean
+## What the two marks mean
 
 | | | |
 | --- | --- | --- |
 | `✗` | error | The instance will refuse this, or the site cannot read it. Publishing is blocked. |
 | `!` | warning | It will be accepted and is probably not what anybody meant. |
-| `·` | tip | An option that exists and is not set. **Never a defect.** |
 
-**A tip is an offer, not a to-do list.** "`tags` is not set" on fourteen days
-is a thing worth knowing once; it is not fourteen jobs, and a journal with no
-tags is a perfectly good journal. Read the tips out to the person as *choices
-available*, and let them pick. Do not work down the list.
+A section the instance says is **neither answered nor declined** comes back as
+an error with the sentence that would decline it. That is not a defect to
+clear by filling something in: it is a question, and "we didn't track that" is
+as good an answer as a value.
 
 ## How to use it in a conversation
 
 1. **Run it and read the errors out.** They are specific and they name the
-   file and the line. Fix those first, in the files.
+   file and the field. Fix those first, in the files — asking the person
+   wherever the fix is a fact only they know.
 2. **Take the warnings one at a time.** Each is a real question — "a budget is
    set and none of the fourteen days records any spending" is either true or
    it means somebody's costs never left their laptop, and only they know
    which.
-3. **Offer the tips as a short list**, in their own words: *"you could add
-   coordinates, tags, or what each day cost — do any of those matter to you?"*
-   Then stop and let them answer.
+3. **If they ask what else they could set**, offer it as a short list of
+   choices, in their own words — *"you could add coordinates, tags, or what
+   each day cost — do any of those matter to you?"* — and let them pick. The
+   contract at `/api/v2/openapi.json` is the list of what exists. Do not work
+   down it.
 4. **Never invent a value to clear a finding.** An empty field is a question
    somebody can answer in four seconds; a filled-in one is a lie they may
    never notice. This is the repository's one rule and it applies hardest
@@ -76,8 +78,8 @@ agree about what a writable document is, or this passes what publishing is
 refused for (B1782).
 
 That is the whole of this half, and the reason it is not more than that is
-worth stating: this repository has re-derived the instance's rules twice and
-been wrong both times. `model.mjs` was a hand-kept copy of the file shape and
+worth stating: this repository has re-derived the instance's rules more than
+once and been wrong every time. `model.mjs` was a hand-kept copy of the file shape and
 fell behind. Reading `/content-model.json` replaced it, and that document then
 described v1 for a year while the instance refused what it advertised. A
 validator that asks cannot drift; a validator that knows will.

@@ -36,9 +36,9 @@ const bytes = (n) => `${(n / 1024 / 1024).toFixed(1)} MB`;
  * Stage the export where it belongs to no day yet.
  *
  * v2 has one upload door for every kind of bytes — `POST .../media`, with an
- * `intent` saying what they are — rather than a separate `/inbox` POST. A
- * `gps_history` intent with no trip and no day is exactly what the inbox was:
- * staged, readable back, and attached to nothing.
+ * `intent` saying what they are. A `gps_history` upload is asked two things,
+ * `trip` and `format`, and each is answered or declined; `day` is not asked
+ * of it at all, and sending it anyway is refused rather than ignored.
  */
 async function stage(path) {
   const name = basename(path);
@@ -48,15 +48,16 @@ async function stage(path) {
   form.set("file", await fileFrom(path, name));
   form.set("intent", JSON.stringify({
     kind: "gps_history",
+    ...(format ? { format } : {}),
     declined: {
       trip: "a location history belongs to the journal, not to one trip",
-      day: "a location history spans months, not one day",
+      ...(format ? {} : { format: "let the server detect it" }),
     },
   }));
   const result = await call("POST", `/api/v2/${user}/media`, { body: form });
   if (!result.ok) die(`  the upload was refused:\n${refusal(result)}`);
   const item = result.body.items?.[0] ?? result.body;
-  if (!item?.id && !item?.src) die(`  the upload accepted nothing back: ${JSON.stringify(result.body).slice(0, 200)}`);
+  if (!item?.src) die(`  the upload accepted nothing back: ${JSON.stringify(result.body).slice(0, 200)}`);
   return item;
 }
 
@@ -78,12 +79,15 @@ async function main() {
     // without a second upload, and a dry run that refused would otherwise have
     // sent the bytes for nothing anyway.
     const staged = await stage(path);
-    console.log(`  staged as ${staged.id}${staged.duplicate ? " (already there)" : ""}`);
+    // The upload answers with `src: "inbox:<id>"`; the import route wants the
+    // bare id.
+    const inbox = staged.src.replace(/^inbox:/, "");
+    console.log(`  staged as ${staged.src}${staged.duplicateOf ? " (already there)" : ""}`);
 
     // `dryRun` is a query parameter in v2, not a body field — the body is a
     // strict object and an unknown key is refused rather than ignored, which
     // is the improvement that makes this worth getting right.
-    const body = { kind: "gps", inbox: staged.id };
+    const body = { kind: "gps", inbox };
     if (format) body.format = format;
     const result = await call("POST", `/api/v2/${user}/import${dryRun ? "?dryRun=true" : ""}`, { body });
     if (!result.ok) {
@@ -104,20 +108,22 @@ async function main() {
         `  the journal now holds ${r.stored.after} positions for those months ` +
           `(was ${r.stored.before})`,
       );
+      // Since B2202 an import re-draws every trip whose dates it overlaps, in
+      // the same write — there is nothing further to ask for those.
+      for (const t of r.rederived ?? [])
+        console.log(`  ${t.tripId}: route ${t.ok ? "re-drawn" : "could not be re-drawn"}`);
       console.log(
         `\n  The staged export is still in the inbox, and it is the unthinned whole of it.\n` +
-          `  Offer to remove it:  DELETE ${SITE}/api/v2/${user}/inbox/${staged.id}`,
+          `  Offer to remove it:  DELETE ${SITE}/api/v2/${user}/inbox/${inbox}`,
       );
     }
   }
 
   if (wantsTrack) {
-    // **Still v1, and deliberately.** `POST /api/v1/{user}/trips/{trip}/track`
-    // is one of the three v1 routes the migration kept: it has no v2 door
-    // because it is not a document — it derives a clipped, public line from a
-    // position history no route may ever return. `lib/api/openapi.ts` in the
-    // fernscout repo says so beside the route itself.
-    const result = await call("POST", `/api/v1/${user}/trips/${trip}/track`);
+    // Not a document: it derives a clipped, public line from a position
+    // history no route may ever return. It lived at /api/v1 until B1734
+    // retired v1 and moved it here unchanged.
+    const result = await call("POST", `/api/v2/${user}/trips/${trip}/track`);
     if (!result.ok) die(`\n${trip}: refused\n${refusal(result)}`);
     const t = result.body;
     console.log(
@@ -127,7 +133,8 @@ async function main() {
     if (t.next) console.log(`  ${t.next}`);
   } else if (file && !dryRun) {
     console.log(
-      `\n  Nothing is drawn yet. Ask which trip should show its route, then:\n` +
+      `\n  Trips whose dates this export covers were re-drawn above. To draw (or re-draw)\n` +
+        `  one trip's route on demand:\n` +
         `    node upload.mjs --user ${user} --trip <trip-id> --track`,
     );
   }

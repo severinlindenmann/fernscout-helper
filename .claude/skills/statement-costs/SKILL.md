@@ -5,8 +5,10 @@ description: Read a bank or card statement on this machine and put what a trip a
 
 # A statement → what the trip cost
 
-Revolut exports a **consolidated statement** as CSV: `Accounts` → the
-three-dot menu → *Statement*, CSV, the period you want. Drop it in
+Revolut exports a statement as CSV: `Accounts` → the three-dot menu →
+*Statement*, CSV, the period you want. Both the **account statement** and the
+**consolidated statement** are read (`revolut-account` and `revolut`); the live
+list of banks is `media.importFormats` in `<site>/api/v2/status`. Drop it in
 `import/revolut/`, which is gitignored — somebody's account history is not this
 repository's business, and it holds merchant names, balances and an IBAN.
 
@@ -32,7 +34,7 @@ node .claude/skills/statement-costs/statement.mjs --user <username> \
 --trip <id>         which trip; also names the file you agree categories in
 --from / --to       ISO dates. Send them: a statement holds the fortnight either side
 --apply <rows.json> send the agreed rows back, and write them
---format <id>       name the bank instead of letting the file be recognised
+--format <id>       name the reader instead of letting the file be recognised
 ```
 
 ## The one rule here
@@ -47,17 +49,19 @@ the kind of fiction nobody catches later.
 
 ## 1. Read it back
 
-The first run prints what the statement holds: the spending day by day, the
-same payments **by merchant** biggest-first, what was left out (transfers,
-money coming in — counted, never silently dropped), and **what the money
-actually cost** — the amount debited divided by the amount received, per
-currency. That number is v1's convention, and a trip's `rates` is not: v2 rates
-against the euro, so send `rates: {"currencies": [...]}` and let the server rate
-them from the ECB rather than copying a number across. It is easy
-to write upside down.
+The first run uploads the file (a `bank_export`, into the inbox — say so before
+running it), then prints what the statement holds: the spending day by day,
+the same payments **by merchant** biggest-first, and **what the money actually
+cost** — the median of what the account was charged per unit of each foreign
+currency, for currencies the trip's own rates don't cover. Transfers and money
+coming in are left out of the spending by the instance. A trip's `rates` is
+not the same number: v2 rates against the euro, so send
+`rates: {"currencies": [...]}` and let the server rate them from the ECB rather
+than copying a number across. It is easy to write upside down.
 
-**Send `--from` and `--to`.** Without them you get the whole statement, which
-includes the rent.
+**Send `--from` and `--to`.** The instance reports the whole statement; the
+window is applied here, to what is shown and to the rows file. Without it you
+get the rent.
 
 Nothing is written by this run. With `--trip` it leaves
 `export/<trip>-costs.json`: one row per payment, each with `category: null`.
@@ -88,7 +92,9 @@ happened, and:
 
 - **adds, never replaces** — costs somebody wrote by hand stay;
 - **picks the earliest day** when a date has several, by `time:`;
-- **reports a date with no day** rather than attaching it to a neighbour.
+- **files a date with no day onto the trip itself** (`costs.items` in
+  `trip.json`, reported as `filedToTrip`) — never dropped, and never moved to a
+  neighbouring day (B1844).
 
 Sending the same file twice writes the costs twice. If you need to correct one,
 say so and fix it on the day rather than re-running.
@@ -99,9 +105,9 @@ one thing this skill will not do on somebody's behalf.
 ## 4. Then tell them what it says
 
 The trip's costs page adds it up by category, by country and by day. Read the
-total back, along with anything you were unsure about. Costs are
-`costsVisibility: public` by default — everyone who can read the trip sees the
-numbers; `costsVisibility: guests` narrows it.
+total back, along with anything you were unsure about. Who sees the money is
+`costs.visibility` in `trip.json`: `public` (everyone who can read the trip —
+what an absent value means) or `guests`, which narrows it.
 
 The rates are **not** written by any of this. If the trip has none, offer them:
 `PATCH /api/v2/<user>/trips/<trip>` with `{"rates": {"currencies": ["EUR"]}}`.
@@ -109,7 +115,8 @@ The rates are **not** written by any of this. If the trip has none, offer them:
 ## Another bank
 
 Write an importer, in the fernscout repository, under `importers/costs/`. It is
-MIT-licensed, it is one file, and `importers/costs/schema.ts` is the whole
+MIT-licensed (unlike the rest of fernscout, which is Apache-2.0), it is one
+file, and `importers/costs/schema.ts` is the whole
 contract — a `Payment` is `{date, amount, currency, description}` with the sign
 the statement wrote. Then every journal can read that bank, not just this
 laptop.

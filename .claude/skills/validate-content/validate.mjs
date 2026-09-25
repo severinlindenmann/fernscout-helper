@@ -140,12 +140,32 @@ function checkDates(trip, where) {
  * neither answered nor declined, and the sentence that would decline each —
  * which is the thing a person has to write, and the thing no tool may write
  * for them.
+ *
+ * **Which verb, for a day that is already there — B2242.** A `PATCH` to a
+ * *draft* day checks shape only: the studio saves drafts with sections left
+ * open, so completeness is asked once, at publish (fernscout
+ * lib/api/v2/schemas/day.ts, `dayPatchedDraft`). Dry-running a draft through
+ * PATCH therefore never reported a missing section — the one thing this
+ * check exists to find. A `PUT` with the `If-Match` from the GET is a
+ * deliberate replace of a draft, validated in full, and `?dryRun=true` still
+ * writes nothing. A published day refuses `PUT` (`already_published`) and
+ * keeps the full check on `PATCH`, so it stays there. Trips are unchanged.
  */
 async function askTheInstance(path, document, where) {
   const existing = await call("GET", path);
-  const result = existing.ok
-    ? await call("PATCH", `${path}?dryRun=true`, { body: document, ifMatch: existing.etag })
-    : await call("PUT", `${path}?dryRun=true`, { body: document });
+  const isDay = /\/days\/[^/]+$/.test(path);
+  let result;
+  if (!existing.ok) {
+    result = await call("PUT", `${path}?dryRun=true`, { body: document });
+  } else if (isDay && existing.body?.status === "draft") {
+    // `status` is the site's to say: a PUT may only echo what is stored, and a
+    // folder that already says "published" for a day the site holds as a draft
+    // is a publish still to come, not a shape fault — ask about the rest.
+    const { status: _status, ...rest } = document;
+    result = await call("PUT", `${path}?dryRun=true`, { body: rest, ifMatch: existing.etag });
+  } else {
+    result = await call("PATCH", `${path}?dryRun=true`, { body: document, ifMatch: existing.etag });
+  }
   if (result.ok) return { ok: true };
   if (result.status === 401 || result.status === 403) {
     error(where, `the instance refused the credential (${result.status})`,
