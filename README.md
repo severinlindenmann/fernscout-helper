@@ -7,7 +7,8 @@ comes out is a journal of JSON documents and photographs that belongs to you.
 
 You don't host anything and you don't install server software. Your photos,
 statements and location history stay on your machine. Nothing leaves it until
-you choose to publish.
+you say so: every tool that uploads something (a statement, a location history,
+publishing) tells you what goes where first.
 
 ## Quickstart
 
@@ -41,8 +42,10 @@ built and tested with:
   hands over the places it knows.
 
 Everything except the photo export works on any system: a statement is a CSV and
-a journal is JSON. The photo half wants a Mac today because the tool for other
-systems doesn't exist yet.
+a journal is JSON. The photo half wants a Mac because that is where the Photos
+library is. On other systems, a self-hosted instance's `npm run ingest` turns
+any folder of camera files into draft days, and a hosted journal's studio walks
+you through photos, statements and location history in the browser.
 
 ## The tools
 
@@ -50,7 +53,7 @@ systems doesn't exist yet.
 | --- | --- | --- |
 | `icloud-export` | "help me export photos from iCloud" (**start here**) | a Mac |
 | `find-trips` | "find the trips in my photos" | a Mac |
-| `statement-costs` | "import my Revolut statement" | a journal |
+| `statement-costs` | "import my Revolut statement" | a journal on an instance |
 | `trip-budget` | "what did the trip cost", "add the flights" | anywhere |
 | `gps-history` | "add my GPS", "import my Timeline" | a journal on an instance |
 | `validate-content` | "check my journal", "did I forget anything" | anywhere |
@@ -66,9 +69,10 @@ and no `npm install`. Skills that need an outside tool (`icloud-export` needs
 
 ```
 content/<username>/trips/<trip>/
-  trip.json                   the trip: dates, travellers, budget, planned route
+  trip.json                   the trip: dates, people, rates, budget and costs, plan
   entries/2026-06-23-….json   one day: what happened, its photos, what it cost
   media/…                     the photos, resized, with location and camera data removed
+  originals/…                 what the instance keeps as the print master, once published
 ```
 
 JSON documents and photographs in a folder you own: no database, no account. Every
@@ -83,9 +87,9 @@ The folder is already the journal. To read it as a website:
 - **Hosted, at [fernscout.ch](https://fernscout.ch).** You need an email address
   you own. Paste this into a fresh agent session:
 
-  > Walk me through creating my own travel journal, following the overview at
-  > https://fernscout.ch/documentation.txt and the full guide at
-  > https://fernscout.ch/agent.md. You'll need an email address that belongs to me.
+  > Guide me through creating my own travel journal, following the overview at
+  > https://fernscout.ch/documentation.txt and the day-writing guide at
+  > https://fernscout.ch/skill/add-a-day.md. You will need an email address I control.
 
 ## Your data stays out of git
 

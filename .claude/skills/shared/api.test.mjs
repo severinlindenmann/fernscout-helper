@@ -144,6 +144,25 @@ check(
   String(offlineThrew),
 );
 
+// The server's `incomplete` rows are snake_case (`why_required`, `to_decline`)
+// and a `409 stale_document` carries the stored document as `details` itself.
+// Reading only the camelCase spellings printed a bare field name and threw
+// away the sentence that says how to decline it.
+{
+  const { refusal } = await import("./api.mjs");
+  const incomplete = refusal({
+    status: 422,
+    body: {
+      error: "incomplete",
+      details: { missing: [{ field: "costs", why_required: "what this day cost", to_decline: "declined.costs: <reason>" }] },
+    },
+  });
+  check("an incomplete refusal prints why", /costs: what this day cost/.test(incomplete), incomplete);
+  check("an incomplete refusal prints the decline", /or say  declined\.costs/.test(incomplete), incomplete);
+  const stale = refusal({ status: 409, body: { error: "stale_document", details: { slug: "2026-06-22-arrival", title: "x" } } });
+  check("a stale refusal names the stored document", /stored document is 2026-06-22-arrival/.test(stale), stale);
+}
+
 rmSync(CACHE, { recursive: true, force: true });
 console.log(failed === 0 ? "\nall good" : `\n${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

@@ -45,7 +45,8 @@ nobody mentioned, no meals nobody ate, no feelings nobody expressed. A day they
 wrote nothing about gets a question, not a paragraph. One invented memory
 presented to somebody's family as fact is not recoverable.
 
-Everything you write carries `status: draft`. Leave the line there.
+Everything you write is a draft. Putting a day on the site is a separate
+call, made only when the person asks for it (the `publish` skill).
 
 ## 1. Check the tools
 
@@ -73,7 +74,7 @@ Five questions. Ask them together, in the person's own language:
 | **What is the trip called?** | Becomes the folder and the URL: lowercase, dashes, `example-trip-2024` ages better than `holiday`. |
 | **Is there an album?** | `--album "Example Trip"` is more precise than dates when they made one. Dates alone are fine. |
 | **All photos, or only the good ones?** | `--favourites` takes only hearted ones; `--top 15` takes every favourite plus the best-scoring rest, up to fifteen a day. Nothing takes everything. |
-| **Who else was on this trip?** | Their name, and — only if they want that person to be able to write to the trip — an address. `people:` is the byline *and* write access, so a name with the wrong address is worse than a name not listed yet; **never infer one**, including from a face you recognise in the photographs. Asked here, not at the end (step 7), because the answer shapes the figures at build time and a person looking at their own holiday photographs still remembers who was there. |
+| **Who else was on this trip?** | Their name and their email address, as the person gives it. `people` is the byline *and* write access, and the instance **mails every person newly added** to a trip, so a name with the wrong address is worse than a name not listed yet; **never infer one**, including from a face you recognise in the photographs. Somebody they don't want to list goes unlisted. Asked here, not at the end (step 7), because the answer shapes the figures at build time and a person looking at their own holiday photographs still remembers who was there. |
 
 Photos scores its own pictures for composition and exposure, which is what
 `--top` sorts by. It is a decent first pass and it is not taste — say so, and say
@@ -180,8 +181,8 @@ old files beside new ones, each individually valid, so a validation pass called
 it "28 entries, 0 issues". A second build refuses unless `--force` says to
 replace what is there; `originals/` is never touched (B1768). Photographs are resized to
 **4000px** and **stripped of all metadata** — a phone writes the coordinates of
-somebody's front door into a file — with the coordinates kept in the frontmatter
-instead, where they can be seen and deleted. Photo notes become captions.
+somebody's front door into a file — with the coordinates kept in the day's
+`coordinates` field instead, where they can be seen and deleted. Photo notes become captions.
 
 **4000 and not 2000, deliberately.** A Fernscout instance makes its own 2000px
 copy for the web and keeps what you send **untouched, as the print master** —
@@ -189,7 +190,9 @@ copy for the web and keeps what you send **untouched, as the print master** —
 largest file you have"*. Baking down to what the site happens to serve saves
 nothing and silently costs the photobook: a 2000px file prints an A4 plate at
 about 170 dpi, against the 300 it is built for. `--max-edge` overrides it; the
-instance's ceiling is 8000px and 50 MB an image, in `/api/health`. A trip of
+instance's ceilings (12000px, 64 megapixels and 50 MB an image today) are
+`limits.imageMaxEdge`, `imageMaxPixels` and `imageMaxBytes` in
+`<site>/api/v2/status` — read them there rather than quoting them. A trip of
 twenty-odd days lands around half a gigabyte.
 
 The review page is built at the same size, because B646 says there is exactly
@@ -199,7 +202,7 @@ some time and some disk in `export/<trip>/baked/`, which is the honest price of
 not having two resizes that can disagree.
 
 Anything held back on the review page is written as `visibility: "guest"` or
-`visibility: "private"` inside its gallery item. On a running site that photo
+`visibility: "private"` on its item in the day's `media`. On a running site that photo
 is absent from the gallery, absent from the day, and its file answers 404 to
 anybody below that level — it is not merely hidden from the page. Nothing is
 written for a picture nobody held back, which is what the ordinary case looks
@@ -210,7 +213,7 @@ It leaves two things empty on purpose: **every title, and every paragraph.**
 ## 6. Write the days
 
 Read `export/<trip>/notes.md`. It is the person's words, arranged by day. Write
-each entry's `title:` and its prose from that, in **their** language — if the
+each entry's `title` and its `content` from that, in **their** language — if the
 notes are in German, the journal is in German; if they are in dialect, tidy the
 spelling and keep the words.
 
@@ -227,11 +230,13 @@ now, with costs and the planned route as sections of it:
   "dates": { "from": "2026-06-22", "to": "2026-07-01" },
   "accent": "sky",
   "visibility": "private",
+  "teaser": false,
   "people": [
-    { "name": "Their name", "email": "only if they gave one — write access, so never guess it" }
+    { "name": "The journal's owner", "email": "the address they sign in with — ask, never guess" }
   ],
   "intro": "A paragraph about what this trip was, from what they told you.",
   "declined": {
+    "buddies": "travelling solo",
     "costs": "nothing has been recorded about what this trip cost yet",
     "plan": "no planned route was written down for this trip"
   }
@@ -243,16 +248,20 @@ upcoming. Every optional section is either written or named in `declined` with
 a real reason; the two above are examples of the shape, not sentences to paste
 when they are not true.
 
-`private` means the people who were there. Never widen it without being asked,
-and never write a `passwordHash:` line.
+`private` means the people who were there. Never widen it without being asked.
+A `private` or `guest` trip must say whether its existence may show as a
+locked card — `teaser`, `true` or `false`; ask, and `false` is the quiet
+answer. (A `public` trip uses `listed` instead.)
 
-Leave `people:` off entirely if step 2's answer was just the person you are
-talking to — a byline of one is not a fault. If they named someone with an
-address, carry that same person into the figure's own `for` when you build the
-figures below, so their figure is tied to them rather than left an anonymous
-shape; a name with no address gets no `for`, since that field is drawn from
-`people` and an inferred one is exactly the address this rule exists to keep
-out. Figures are their own documents in v2 — one file each under
+`people` always holds at least the owner, with the address they sign in with.
+If step 2's answer was just the person you are talking to, decline `buddies`
+("travelling solo") rather than inventing company. Everybody else listed gets
+a mail from the instance saying they are on the trip — say that before adding
+anyone. If they named someone with an address, carry that same address into
+the figure's own `person` when you build the figures below, so their figure is
+tied to them rather than left an anonymous shape; a name with no address gets
+no `person`, since an inferred one is exactly the address this rule exists to
+keep out. Figures are their own documents in v2 — one file each under
 `figures/`, journal-wide — and a trip names the ones it uses.
 
 A **photograph's** own label is the narrower version of the same idea, and it
@@ -267,8 +276,8 @@ is already `private`, say so rather than writing a label that changes nothing.
 Now, and not before, ask whether they want to add:
 
 - **Costs** — `costs` on a day for what was spent that day, or the trip's own
-  `costs.items` for what was paid **before leaving**; the two are different
-  things in v2 and a trip carrying both reports its spend twice. A foreign
+  `costs.items` for what was paid **before leaving** (or belongs to no day);
+  a trip carrying the same money in both reports its spend twice. A foreign
   currency needs the trip to name it — `"rates": {"currencies": ["EUR"]}` — and
   the server rates it; do not write a rate number.
 - **Places** — days whose photos had no GPS have no `coordinates`. They can say
@@ -290,13 +299,14 @@ choose:
   own. Hand them this, to paste into a fresh agent session:
 
   > Führe mich durch das Anlegen meines eigenen Reisetagebuchs, nach der
-  > Übersicht unter https://fernscout.ch/documentation.txt und der vollständigen
-  > Anleitung unter https://fernscout.ch/agent.md. Du brauchst dafür eine
-  > E-Mail-Adresse, die mir gehört.
+  > Übersicht unter https://fernscout.ch/documentation.txt und der Anleitung zum
+  > Schreiben eines Tages unter https://fernscout.ch/skill/add-a-day.md. Du
+  > brauchst dafür eine E-Mail-Adresse, die mir gehört.
 
 - **Their own server**, from the Fernscout repository, pointing `CONTENT_DIR` at
   this `content/` folder.
 
-**Publishing is never yours to decide.** Every entry is a draft; a person removes
-the `status: draft` line, or asks you to. Ask in words, and wait for an answer —
+**Publishing is never yours to decide.** Every entry is a draft until a person
+asks for it to go on the site — then the `publish` skill makes that call. Ask in
+words, and wait for an answer —
 "it looks finished" is not consent, and neither is silence.

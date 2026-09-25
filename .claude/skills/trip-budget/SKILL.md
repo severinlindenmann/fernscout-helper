@@ -11,16 +11,16 @@ else's card and settled later. **Those are the biggest lines and they are the
 ones nobody thinks to mention** — which is why this skill asks rather than waits.
 
 ```bash
-node costs.mjs check  --trip <trip> --user <user>          # what is there, what is not
-node costs.mjs add    --trip … --user … --before  --label "Flights" --amount 780 --currency CHF --category flights
-node costs.mjs add    --trip … --user … --day 2026-06-24 --label "Car hire" --amount 240 --currency EUR --category transport
-node costs.mjs budget --trip … --user … --total 3000 --days 10 --currency CHF
+node .claude/skills/trip-budget/costs.mjs check  --trip <trip> --user <user>          # what is there, what is not
+node .claude/skills/trip-budget/costs.mjs add    --trip … --user … --before  --label "Flights" --amount 780 --currency CHF --category flights
+node .claude/skills/trip-budget/costs.mjs add    --trip … --user … --day 2026-06-24 --label "Car hire" --amount 240 --currency EUR --category transport
+node .claude/skills/trip-budget/costs.mjs budget --trip … --user … --total 3000 --days 10 --currency CHF
 ```
 
 ## Start by looking
 
 ```bash
-node costs.mjs check --trip example-trip-2024 --user alex
+node .claude/skills/trip-budget/costs.mjs check --trip example-trip-2024 --user alex
 ```
 
 It prints what is recorded, by category, which days have nothing, and which of
@@ -35,9 +35,10 @@ for an answer. An empty field beats a made-up number: the costs page says
 "not counted" rather than inventing a total, which is the honest outcome.
 
 **Before the trip** — these go on the trip itself with `--before`, in
-`trip.json`'s `costs.items`, which in v2 is *preparation only*: what was paid
-before leaving. Everything spent on the trip belongs to the day it was spent
-on, and a trip that carries both reports its spend twice:
+`trip.json`'s `costs.items`, which in v2 is spend that belongs to no day: what
+was paid before leaving (and, since B1844, statement rows whose date has no day
+written). Everything spent on a day belongs to that day, and a trip that
+carries the same money in both places reports its spend twice:
 
 | Ask about | Category |
 | --- | --- |
@@ -59,7 +60,9 @@ on, and a trip that carries both reports its spend twice:
 
 **And the budget itself**: what was the trip meant to cost, over how many days?
 `costs.mjs budget` writes it, and the costs page then draws the real spending
-against it.
+against it. Leave `--currency` off when they don't name one — the instance
+reads that as the journal's base currency — and `--days` off to mean the trip's
+own day count.
 
 ## Ask about statements too
 
@@ -67,11 +70,12 @@ Say it plainly, once: *"If you have a bank or credit-card statement for those
 dates, I can read it and add everything at once — you would only have to tell me
 which lines were not the trip."*
 
-- **Revolut** → the `statement-costs` skill. The instance reads the format.
+- **Revolut** (account or consolidated statement) → the `statement-costs`
+  skill. The instance reads the format.
 - **Any other bank or card** → ask for a CSV export covering the trip dates,
   and try `statement-costs` anyway: it says plainly when nothing recognises the
   file. A bank the instance cannot read yet is an importer to contribute to
-  `importers/costs/` in the fernscout repository — MIT, one file — so that
+  `importers/costs/` in the fernscout repository — MIT-licensed, one file — so that
   every journal can read it rather than this laptop.
 - **A PDF statement** is not worth parsing. Ask them to read out the handful of
   lines that were the trip, or export CSV instead.
@@ -87,10 +91,13 @@ not, the interview above gets the big lines anyway.
 
 - Fernscout knows seven categories — `preparation`, `flights`, `accommodation`,
   `food`, `transport`, `activities`, `other` — and anything else is refused
-  rather than quietly turned into `other`.
+  rather than quietly turned into `other`. `--category` is optional: a cost
+  with no category is accepted, and the script never fills one in for them.
+- Amounts must be positive; nothing here writes zero or a refund as a cost.
 - A cost written by a person and a cost read from a statement live in the same
-  list, and only the statement's own lines carry `# bank`. A re-import replaces
-  those and **never touches the ones somebody typed**.
+  list. Applying a statement **adds, and never touches the ones somebody
+  typed** — which also means applying the same rows twice writes them twice.
+  Correct a wrong line on the day rather than re-running.
 - `--day` needs an entry for that date. If there is none — a day whose
   photographs were all turned off — say so and ask whether to add the day, rather
   than moving the cost to a day it did not happen on.

@@ -162,6 +162,11 @@ curl -s -X POST https://fernscout.ch/api/auth/codes/redeem -H 'content-type: app
 export FERNSCOUT_TOKEN=fs_agent_…
 ```
 
+If the person would rather not deal with six digits, their journal's own page
+can print a **handover** credential instead (it lasts twenty minutes and works
+once): `POST /api/auth/handover` with `authorization: Bearer <handover>`
+exchanges it for the same seven-day token.
+
 It lasts seven days. `FERNSCOUT_URL` points these tools at a different
 instance; everything defaults to `https://fernscout.ch`.
 

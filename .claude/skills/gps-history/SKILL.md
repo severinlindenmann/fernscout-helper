@@ -57,44 +57,61 @@ line for one trip; say that, because it is the thing that makes the answer
 reasonable. But ask.
 
 **2. "Where is home?"** If a trip started or ended at their front door, the
-line starts at their front door. The instance can cut a radius out of every
-line it ever draws — `content/<user>/gps/exclude.json` on the server — but
-nothing can guess the coordinates. Ask for the address or the rough spot, and
-tell them what it is for.
+line starts at their front door. The instance cuts a radius out of every line
+it ever draws — its private zones — but nothing can guess the coordinates. Ask
+for the address or the rough spot, and tell them what it is for. Then either
+they set it themselves in their studio (`/<user>/studio/location`), or you set
+it for them with the zones door (B2203), owner token only:
 
-Do not upload before both answers. This is the one place in this repository
+```bash
+curl -s "$FERNSCOUT_URL/api/v2/<user>/gps/zones" -H "authorization: Bearer $FERNSCOUT_TOKEN"
+# PUT replaces the whole list — send the zones already there plus the new one
+curl -s -X PUT "$FERNSCOUT_URL/api/v2/<user>/gps/zones" \
+     -H "authorization: Bearer $FERNSCOUT_TOKEN" -H 'content-type: application/json' \
+     -d '{"zones":[{"label":"home","lat":…,"lon":…,"radiusM":500}]}'
+```
+
+If they say there is no home to cut out, `{"zones": [...], "homeDeclined": true}`
+records that as an answer rather than an omission.
+
+Do not upload before both answers — and that includes `--dry-run`, which
+stages the file on the instance before reading it. This is the one place in this repository
 where a wrong step is not fixable by editing a file afterwards: the export goes
 to a server, and although they can delete it, they cannot un-send it.
 
 ## What the run does
 
-1. **Reads and checks the file without sending it** (`--dry-run`). Says which
-   format recognised it, how many positions came out and what span they cover.
+1. **Reads and checks the file without keeping anything** (`--dry-run`). The
+   file is staged in the inbox and read from there, but nothing enters the
+   store. Says which format recognised it, how many positions came out and
+   what span they cover.
    A span running to 1970, or a count of zero, means the file is not what it
    looks like — stop and say so.
 2. **Uploads it through the one media door** (`POST /api/v2/<user>/media`, with
-   an intent saying the bytes are a `gps_history`), where it sits as a file belonging to
-   no day.
+   an intent saying the bytes are a `gps_history` and declining `trip` and
+   `format` unless you know them), where it sits as a file belonging to no day.
 3. **Imports it**, which thins it — one position per five minutes or 250
    metres — and merges it with anything imported before. Importing the same
-   export twice changes nothing.
+   export twice changes nothing. **Every trip whose dates the import overlaps
+   has its line re-drawn in the same call** (B2202), and the run lists which.
 4. **Offers to delete the staged original**, and you should offer: the inbox
    copy is the unthinned whole of it.
-5. **Draws one trip's line** (`--trip … --track`), which clips to the trip's
-   dates, cuts out the private zones, and leaves gaps as gaps — a flight is a
-   hole in the data, not a line across a continent.
+5. **Re-draws one trip's line on demand** (`--trip … --track`,
+   `POST /api/v2/<user>/trips/<trip>/track`), which clips to the trip's dates,
+   cuts out the private zones, and leaves gaps as gaps — a flight is a hole in
+   the data, not a line across a continent. Use it after changing the private
+   zones, or for a trip created after the import.
 
-Steps 3 and 5 are separate calls because they are separate decisions. A person
-can import a decade and draw one week of it, and change their mind about the
-week years later.
+A reader only ever sees the segments of **published** days: a line drawn for a
+trip still in draft is invisible until its days are published.
 
 ## What to say afterwards
 
-The number of segments and points, and **which trip now shows a line**. Then
-the two things they can still decide:
+**Which trips were re-drawn**, and the segment and point counts for any trip
+drawn on demand. Then the two things they can still decide:
 
 - the staged export is still in their inbox unless they said to delete it;
-- more trips can be drawn from the same history at any time, one call each.
+- a trip can be re-drawn from the same history at any time, one call each.
 
 Do not say "your location history is now on the site". It is not: the store is
 served by nothing, and one trip's clipped line is what a reader sees.
