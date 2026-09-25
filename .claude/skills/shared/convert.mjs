@@ -13,9 +13,9 @@
 //
 // 1. **`without:` and `unrecorded:` meant different things.** `without:
 //    [costs]` was "nothing was spent"; `unrecorded: [costs]` was "money was
-//    spent and nobody wrote down what". Both become `declined`, and a port
-//    that maps them to one sentence destroys a fact the owner recorded
-//    deliberately. Two sentences, kept apart.
+//    spent and nobody wrote down what". The first is an answer in v2,
+//    `costs: []`; only the second declines. A port that maps them to one
+//    thing destroys a fact the owner recorded deliberately (B560).
 // 2. **A trip's costs changed meaning.** In v2 `costs.items` is *preparation*
 //    — money spent before leaving — and everything spent on the trip belongs
 //    to its days. One real folder's `costs.md` was line-for-line the same
@@ -56,9 +56,15 @@ export function contentHash(file) {
 
 /** v1 wrote one sentence per declined section; v2 wants a reason of ten
  * characters or more, and these are the two the hand migration used. They are
- * kept apart deliberately — see the header. */
+ * kept apart deliberately — see the header.
+ *
+ * `costs` is deliberately NOT in `WITHOUT`: "nothing was spent" is an
+ * *answer* in v2, `costs: []`, not a decline (B560, and upstream's own
+ * `scripts/example-to-v2.mts`). Only `unrecorded` — money spent, figures
+ * gone — declines costs. `lib/entries.ts` reads every decline on a
+ * trackable field as `unrecorded`, so writing "nothing spent" as a decline
+ * would turn a zero-spend day into a lost-figures day on the site. */
 export const WITHOUT = {
-  costs: "nothing was spent on this day",
   coordinates: "no position was recorded for this day",
   photos: "no photographs were taken on this day",
   media: "no photographs were taken on this day",
@@ -108,7 +114,35 @@ function convertDay(file, raw, tripId, where) {
   const carry = (key, to = key) => { if (data[key] !== undefined) day[to] = data[key]; };
   for (const key of ["time", "timezone", "location", "country", "countryCode",
     "transportMode", "transportFrom", "transportTo", "tags", "translations",
-    "visibility", "travelScene", "test", "costs"]) carry(key);
+    "visibility", "travelScene", "test"]) carry(key);
+
+  // Translations: v2 wants title AND content in every block (strict). A
+  // missing half is never filled in here — a translated title is somebody's
+  // words, and so is a translated paragraph. A block with only a title is
+  // dropped (the title is quoted in the report, so nothing is lost); a block
+  // with prose and no title is kept, because dropping prose is worse than a
+  // refusal that names the one field somebody has to add.
+  if (day.translations && typeof day.translations === "object") {
+    const kept = {};
+    for (const [locale, block] of Object.entries(day.translations)) {
+      const hasTitle = typeof block?.title === "string" && block.title.trim() !== "";
+      const hasContent = typeof block?.content === "string" && block.content.trim() !== "";
+      if (hasTitle && !hasContent) {
+        warn(`${tripId}/${slug}: translations.${locale} had a title and no content — v2 needs both, so it was dropped. The title was: ${JSON.stringify(block.title)}`);
+        continue;
+      }
+      if (!hasTitle && hasContent) {
+        warn(`${tripId}/${slug}: translations.${locale} has content and no title — kept, and the instance will refuse the day until somebody writes that title (it is never copied from the main one)`);
+      }
+      if (!hasTitle && !hasContent) {
+        warn(`${tripId}/${slug}: translations.${locale} was empty — dropped`);
+        continue;
+      }
+      kept[locale] = block;
+    }
+    if (Object.keys(kept).length) day.translations = kept;
+    else delete day.translations;
+  }
 
   if (data.lat !== undefined && data.lng !== undefined) {
     day.coordinates = { lat: data.lat, lng: data.lng };
@@ -153,16 +187,36 @@ function convertDay(file, raw, tripId, where) {
     day.weather = true;
   }
 
-  declineFrom(data.without, WITHOUT, declined, "this day has none of it");
-  declineFrom(data.unrecorded, UNRECORDED, declined, "nobody wrote this down");
+  // Costs, three answers kept apart (B560): a list is what was spent; "nothing
+  // was spent" (`costs: false`, `without: [costs]`) is the answer `[]`; and
+  // "money was spent and the figures are gone" (`costs: "unknown"`,
+  // `unrecorded: [costs]`) is the only one that declines.
+  const without = (Array.isArray(data.without) ? data.without : []).filter((f) => f !== "costs");
+  const nothingSpent = data.costs === false || (Array.isArray(data.without) && data.without.includes("costs"));
+  const figuresLost = data.costs === "unknown" || (Array.isArray(data.unrecorded) && data.unrecorded.includes("costs"));
+  if (Array.isArray(data.costs)) {
+    day.costs = data.costs;
+    if (nothingSpent || figuresLost) {
+      warn(`${tripId}/${slug}: carries ${data.costs.length} cost item(s) AND says ${figuresLost ? "the figures are lost" : "nothing was spent"} — kept the items and dropped the other claim; check which is true`);
+    }
+  } else if (figuresLost) {
+    declined.costs = UNRECORDED.costs;
+  } else if (nothingSpent) {
+    day.costs = [];
+    note(`${tripId}/${slug}: "nothing was spent" became costs: [] — an answer in v2, not a decline`);
+  } else if (data.costs !== undefined) {
+    warn(`${tripId}/${slug}: costs: ${JSON.stringify(data.costs)} is not a list, false or "unknown" — nothing was carried for it`);
+  }
+
+  declineFrom(without, WITHOUT, declined, "this day has none of it");
+  declineFrom((Array.isArray(data.unrecorded) ? data.unrecorded : []).filter((f) => f !== "costs"),
+    UNRECORDED, declined, "nobody wrote this down");
   if (data.coordinates === false) declined.coordinates = WITHOUT.coordinates;
   if (data.photos === false) declined.media = WITHOUT.media;
-  if (data.costs === false) { delete day.costs; declined.costs = WITHOUT.costs; }
-  if (data.costs === "unknown") { delete day.costs; declined.costs = UNRECORDED.costs; }
   if (Object.keys(declined).length) day.declined = declined;
 
   for (const key of ["cover", "slug", "gallery", "lat", "lng", "weatherData", "weather",
-    "without", "unrecorded", "photos", "status"]) delete data[key];
+    "without", "unrecorded", "photos", "status", "costs", "coordinates"]) delete data[key];
   const leftover = Object.keys(data).filter((k) => day[k] === undefined);
   if (leftover.length) warn(`${tripId}/${slug}: carried nothing for ${leftover.join(", ")} — no v2 field of that name`);
 
@@ -250,6 +304,20 @@ function alreadyOnADay(items, onDays) {
   });
 }
 
+/** Every v1 trip.md key this converter knows what to do with. Anything else is
+ * reported rather than dropped in silence. */
+const KNOWN_TRIP_KEYS = new Set(["id", "title", "start", "end", "visibility", "people", "teaser",
+  "listed", "accent", "cover", "tagline", "translations", "test", "reminder", "reminderChannel",
+  "rates", "tracks", "travellers", "status", "costsVisibility"]);
+
+/** v2's reminder channels (`REMINDER_CHANNELS`, lib/tripWrite.ts upstream). */
+const REMINDER_CHANNELS = ["mail", "whatsapp"];
+
+/** What a figure document may carry besides its id and `person`
+ * (schemas/figures.ts, strict) — the same list upstream's own migrator uses. */
+export const FIGURE_KEYS = ["name", "hairStyle", "outfit", "build", "age", "skin", "hair", "eyes",
+  "shirt", "pants", "pack", "headscarf", "accessories"];
+
 function convertTrip(dir, id, days) {
   const tripRead = existsSync(join(dir, "trip.md")) ? parseFrontmatter(readFileSync(join(dir, "trip.md"), "utf8")) : null;
   if (!tripRead) return null;
@@ -261,11 +329,25 @@ function convertTrip(dir, id, days) {
   else warn(`${id}: no start/end — v2 requires dates.from and dates.to, and this one has none to carry`);
 
   for (const key of ["visibility", "people", "teaser", "listed", "accent", "cover",
-    "tagline", "translations", "test", "reminder"]) {
+    "tagline", "translations", "test"]) {
     if (data[key] !== undefined) trip[key] = data[key];
   }
   const intro = (tripRead.body ?? "").trim();
   if (intro) trip.intro = intro;
+
+  // Reminder: v1's two scalars, `reminder: true` + `reminderChannel:`, are
+  // one field in v2 — `reminder: {channel}`, where presence is the switch
+  // (schemas/trip.ts, D18). A `true` with no channel beside it cannot be
+  // carried: which channel somebody wanted nudging on is theirs to say.
+  if (data.reminder === true) {
+    if (REMINDER_CHANNELS.includes(data.reminderChannel)) {
+      trip.reminder = { channel: data.reminderChannel };
+    } else {
+      warn(`${id}: reminder: true with ${data.reminderChannel === undefined ? "no reminderChannel" : `reminderChannel ${JSON.stringify(data.reminderChannel)}`} — v2 needs one of ${REMINDER_CHANNELS.join(", ")}, so the reminder is off until somebody picks one`);
+    }
+  } else if (data.reminderChannel !== undefined) {
+    note(`${id}: dropped reminderChannel ${JSON.stringify(data.reminderChannel)} — the reminder itself was not on`);
+  }
 
   // Rates: the names travel, the numbers do not. v1's number was units per 1
   // unit of the journal's base currency and v2's is units per 1 EUR — and
@@ -279,66 +361,97 @@ function convertTrip(dir, id, days) {
     }
   }
 
-  // `tracks: {costs: false}` was v1's way of saying a trip does not follow
-  // something. That is a decline now, and it needs a sentence.
-  for (const [field, on] of Object.entries(data.tracks ?? {})) {
-    if (on === false) declined[RENAMED_DECLINE[field] ?? field] = `this trip does not track ${field}`;
+  // costs.md and plan.md become sections of the one document. `costsVisibility`
+  // lives inside the section now (`costs.visibility`) — and it is carried
+  // even without a costs.md, because dropping it quietly publishes the money
+  // of a trip whose owner said only guests may see it.
+  const costs = {};
+  if (data.costsVisibility !== undefined) costs.visibility = data.costsVisibility;
+  const costsFile = join(dir, "costs.md");
+  let items = [];
+  if (existsSync(costsFile)) {
+    const { data: costsData, body: costsBody } = parseFrontmatter(readFileSync(costsFile, "utf8"));
+    if (costsData.budget) costs.budget = costsData.budget;
+    if (Array.isArray(costsData.costs)) items = costsData.costs;
+    const prose = (costsBody ?? "").trim();
+    if (prose) costs.note = prose;
   }
 
-  // costs.md and plan.md become sections of the one document.
-  const costsFile = join(dir, "costs.md");
-  if (existsSync(costsFile)) {
-    const { data: costsData } = parseFrontmatter(readFileSync(costsFile, "utf8"));
-    const costs = {};
-    if (costsData.budget) costs.budget = costsData.budget;
-    if (Array.isArray(costsData.costs) && costsData.costs.length) costs.items = costsData.costs;
-    if (Object.keys(costs).length) trip.costs = costs;
+  // B-7 — the one that loses money silently, and the reason this is
+  // measured rather than assumed.
+  //
+  // In v2 a trip's `costs.items` is PREPARATION — what was paid before
+  // leaving — and everything spent on the trip belongs to the day it was
+  // spent on. v1 had no such split: one real folder's `costs.md` was
+  // line-for-line the same 27 items its own days already carried, both
+  // sides summing to exactly CHF 923.60 against a CHF 1000 budget, and
+  // writing both publishes the trip at 1847.20 with no error anywhere.
+  //
+  // So an item the days already carry is **dropped from the trip**, and the
+  // run says so. Nothing is lost by that: it is the same money, still on the
+  // day it was spent, and the day is where v2 keeps it. What is kept is
+  // every item that appears on no day — the flights, the hotels, the hire
+  // car — which is exactly what preparation means.
+  const onDays = daySpend(days);
+  const duplicated = alreadyOnADay(items, onDays);
+  const kept = items.filter((item) => !duplicated.includes(item));
+  if (kept.length) costs.items = kept;
+  if (duplicated.length) {
+    warn(
+      `${id}: ${duplicated.length} of ${items.length} items in costs.md are the same money the days ` +
+      `already carry (${sum(duplicated).toFixed(2)}) — dropped from the trip, which in v2 holds ` +
+      `preparation only. The days keep every one of them, so the trip now totals ` +
+      `${(sum(kept) + sum(onDays)).toFixed(2)} rather than ${(sum(items) + sum(onDays)).toFixed(2)}. ` +
+      (kept.length
+        ? `${kept.length} item(s) appear on no day and were kept as preparation.`
+        : `Nothing was left on the trip but its budget.`),
+    );
+  } else if (items.length && onDays.length) {
+    note(`${id}: trip items ${sum(items).toFixed(2)}, day items ${sum(onDays).toFixed(2)}, none of them the same line twice — preparation plus on-trip spend, which is the ordinary shape`);
+  }
+  if (Object.keys(costs).length) trip.costs = costs;
 
-    // B-7 — the one that loses money silently, and the reason this is
-    // measured rather than assumed.
-    //
-    // In v2 a trip's `costs.items` is PREPARATION — what was paid before
-    // leaving — and everything spent on the trip belongs to the day it was
-    // spent on. v1 had no such split: one real folder's `costs.md` was
-    // line-for-line the same 27 items its own days already carried, both
-    // sides summing to exactly CHF 923.60 against a CHF 1000 budget, and
-    // writing both publishes the trip at 1847.20 with no error anywhere.
-    //
-    // So an item the days already carry is **dropped from the trip**, and the
-    // run says so. Nothing is lost by that: it is the same money, still on the
-    // day it was spent, and the day is where v2 keeps it. What is kept is
-    // every item that appears on no day — the flights, the hotels, the hire
-    // car — which is exactly what preparation means.
-    const onDays = daySpend(days);
-    const items = costs.items ?? [];
-    const duplicated = alreadyOnADay(items, onDays);
-    if (duplicated.length) {
-      const kept = items.filter((item) => !duplicated.includes(item));
-      if (kept.length) costs.items = kept;
-      else delete costs.items;
-      trip.costs = Object.keys(costs).length ? costs : undefined;
-      if (!trip.costs) delete trip.costs;
-      warn(
-        `${id}: ${duplicated.length} of ${items.length} items in costs.md are the same money the days ` +
-        `already carry (${sum(duplicated).toFixed(2)}) — dropped from the trip, which in v2 holds ` +
-        `preparation only. The days keep every one of them, so the trip now totals ` +
-        `${(sum(kept) + sum(onDays)).toFixed(2)} rather than ${(sum(items) + sum(onDays)).toFixed(2)}. ` +
-        (kept.length
-          ? `${kept.length} item(s) appear on no day and were kept as preparation.`
-          : `Nothing was left on the trip but its budget.`),
-      );
-    } else if (items.length && onDays.length) {
-      note(`${id}: trip items ${sum(items).toFixed(2)}, day items ${sum(onDays).toFixed(2)}, none of them the same line twice — preparation plus on-trip spend, which is the ordinary shape`);
+  // `tracks:` is retired (schemas/trip.ts) — "what this trip keeps track of"
+  // is the `declined` map now. Only `costs` has a trip-level decline to go
+  // to; coordinates, photographs and weather are asked of each day, and the
+  // trip's `declined` map refuses them, so they are reported, not written.
+  for (const [field, on] of Object.entries(data.tracks ?? {})) {
+    if (on !== false) continue;
+    if (field === "costs") {
+      if (trip.costs) warn(`${id}: tracks.costs is false but the trip carries a costs section — kept the section and wrote no decline; check which is true`);
+      else declined.costs = "this trip does not track costs";
+    } else {
+      warn(`${id}: tracks.${field}: false has no trip-level home in v2 — each day declines ${RENAMED_DECLINE[field] ?? field} on its own, so nothing was written for it`);
     }
   }
 
   const planFile = join(dir, "plan.md");
   if (existsSync(planFile)) {
-    const { data: planData } = parseFrontmatter(readFileSync(planFile, "utf8"));
-    const plan = {};
-    if (Array.isArray(planData.route) && planData.route.length) plan.route = planData.route;
-    if (planData.note) plan.note = planData.note;
-    if (Object.keys(plan).length) trip.plan = plan;
+    const { data: planData, body: planBody } = parseFrontmatter(readFileSync(planFile, "utf8"));
+    // plan.md's prose is `plan.body` in v2 (schemas/trip.ts; upstream's
+    // migrator). A frontmatter `note:` from older folders is joined to it
+    // rather than dropped, and the run says so.
+    const body = [planData.note, (planBody ?? "").trim()]
+      .filter((part) => typeof part === "string" && part.trim() !== "")
+      .join("\n\n");
+    if (planData.note) note(`${id}: plan.md's note: joined to its prose as plan.body — v2 has one body for a plan`);
+    if (Array.isArray(planData.route) && planData.route.length) {
+      // A v2 stop needs lat/lng. Where a v1 stop names only a place, the stop
+      // is KEPT without coordinates — the same as upstream's own migrator,
+      // which carries route through untouched — and the instance will refuse
+      // the plan until somebody adds them. Never looked up or guessed here:
+      // dropping the stop loses the owner's route, and a guessed position is
+      // an invented one.
+      const plan = { route: planData.route };
+      if (body) plan.body = body;
+      trip.plan = plan;
+      const bare = planData.route.filter((stop) => typeof stop?.lat !== "number" || typeof stop?.lng !== "number");
+      if (bare.length) {
+        warn(`${id}: ${bare.length} of ${planData.route.length} plan stop(s) have no lat/lng (${bare.map((s) => s?.location ?? "?").join(", ")}) — kept as written; v2 needs coordinates on every stop, so add them before the plan is sent`);
+      }
+    } else if (body || planData.route !== undefined) {
+      warn(`${id}: plan.md has no usable route${planData.route !== undefined ? ` (route: ${JSON.stringify(planData.route)})` : ""} — v2's plan needs at least one stop, so nothing was written for it${body ? `. Its prose was: ${JSON.stringify(body)}` : ""}`);
+    }
   }
 
   // `travellers:` is retired. The figures themselves are a journal-wide
@@ -346,13 +459,27 @@ function convertTrip(dir, id, days) {
   // only names which of them it uses — and this is what the caller has to
   // create before the trip is sent.
   if (Array.isArray(data.travellers) && data.travellers.length) {
-    trip.figures = { mode: "custom", figures: data.travellers.map(figureId) };
+    trip.figures = { mode: "custom", figures: [...new Set(data.travellers.map(figureId))] };
     note(`${id}: ${data.travellers.length} traveller(s) became figure ids — create each with PUT /api/v2/{user}/figures/{id} before sending the trip`);
   }
 
   if (data.status) note(`${id}: dropped status: ${data.status} — v2 works it out from the dates`);
+  const leftover = Object.keys(data).filter((k) => !KNOWN_TRIP_KEYS.has(k));
+  if (leftover.length) warn(`${id}: carried nothing for ${leftover.join(", ")} — no v2 field of that name`);
   if (Object.keys(declined).length) trip.declined = declined;
   return { trip, travellers: data.travellers ?? [] };
+}
+
+/** A v1 traveller as a v2 figure document: appearance keys only, and `for`
+ * — the address it belonged to — as `person` (schemas/figures.ts is strict,
+ * so anything else is reported rather than sent to be refused). */
+export function figureFrom(traveller, where) {
+  const doc = { id: figureId(traveller) };
+  for (const key of FIGURE_KEYS) if (traveller[key] !== undefined) doc[key] = traveller[key];
+  if (typeof traveller.for === "string") doc.person = traveller.for;
+  const other = Object.keys(traveller).filter((k) => k !== "for" && !FIGURE_KEYS.includes(k));
+  if (other.length) warn(`${where}: figure ${doc.id} carried nothing for ${other.join(", ")} — a figure has no field of that name`);
+  return doc;
 }
 
 /** A figure's id, made from the address it belonged to: stable, lowercase,
@@ -375,11 +502,56 @@ function copyMedia(from, toDir, storedName) {
   return to;
 }
 
+/** The keys the instance's journal document knows (schemas/journal.ts,
+ * strict). */
+const JOURNAL_KEYS = new Set(["title", "owner", "locales", "baseCurrency", "displayCurrencies",
+  "units", "visibility", "tagline", "figures", "declined"]);
+
+/**
+ * v1 journal settings the strict v2 journal document has no field for, each
+ * mapped where v2 has a home and dropped with a line in the report where it
+ * does not. A key this converter has never heard of is left in place and
+ * reported: it may be a typo of a real one, and the instance naming it is
+ * better than this guessing.
+ */
+function convertConfig(config) {
+  if (config.defaultLocale !== undefined) {
+    // v2's default language is the first entry of `locales`.
+    const locales = Array.isArray(config.locales) ? config.locales.filter((l) => l !== config.defaultLocale) : [];
+    const before = JSON.stringify(config.locales);
+    config.locales = [config.defaultLocale, ...locales];
+    if (before !== JSON.stringify(config.locales)) {
+      note(`config.json: defaultLocale ${config.defaultLocale} became the first of locales (${config.locales.join(", ")}) — in v2 the first locale is the default`);
+    } else {
+      note("config.json: dropped defaultLocale — it was already the first of locales, which is how v2 says it");
+    }
+    delete config.defaultLocale;
+  }
+  if (config.startLocation !== undefined) {
+    note(`config.json: dropped startLocation ${JSON.stringify(config.startLocation)} — v2 has no field for it (nothing rendered it)`);
+    delete config.startLocation;
+  }
+  if (config.manualRates !== undefined) {
+    note(`config.json: dropped manualRates ${JSON.stringify(config.manualRates)} — v2 keeps manual rates per trip (rates.manual) in units per 1 EUR, and a v1 number cannot be converted without a rate nobody has`);
+    delete config.manualRates;
+  }
+  if (config.media !== undefined) {
+    note("config.json: dropped media — upload limits are the instance's own (GET /api/v2/status), not the journal's");
+    delete config.media;
+  }
+  const unknown = Object.keys(config).filter((k) => !JOURNAL_KEYS.has(k));
+  if (unknown.length) {
+    warn(`config.json: ${unknown.join(", ")} — no v2 journal field of that name; left in place, and the instance will refuse it until it is removed or corrected`);
+  }
+}
+
 export function convertJournal(user, { into, from, force = false } = {}) {
   // `from` is for a caller that knows where the folder is — a test, or a run
   // pointed at somebody's Desktop. `CONTENT` is read once at import, so an
   // env var set after the first import would be ignored and the argument is
   // what makes that impossible to get wrong.
+  notes.length = 0;
+  warnings.length = 0;
   const source = join(from ?? CONTENT, user);
   const target = into ?? `${source}-v2`;
   if (!existsSync(source)) throw new Error(`No such journal: ${source}`);
@@ -397,6 +569,7 @@ export function convertJournal(user, { into, from, force = false } = {}) {
       delete config.travellers;
       note("config.json: dropped travellers — figures are their own documents now, one per file under figures/");
     }
+    convertConfig(config);
     writeJson(join(target, "config.json"), config);
   }
 
@@ -430,8 +603,12 @@ export function convertJournal(user, { into, from, force = false } = {}) {
       }
       writeJson(join(target, "trips", id, "trip.json"), converted.trip);
       for (const traveller of converted.travellers) {
-        const fid = figureId(traveller);
-        if (!figures.has(fid)) figures.set(fid, { id: fid, ...traveller });
+        const figure = figureFrom(traveller, id);
+        const seen = figures.get(figure.id);
+        if (!seen) figures.set(figure.id, figure);
+        else if (JSON.stringify(seen) !== JSON.stringify(figure)) {
+          warn(`${id}: figure ${figure.id} is drawn differently on another trip — the first one was kept; one figure is one look in v2`);
+        }
       }
     } else {
       warn(`${id}: no trip.md — nothing to convert for this trip`);
