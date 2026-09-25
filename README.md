@@ -114,4 +114,4 @@ The folder is already the journal. If you want it as a website:
 notes and your journal. This repository is the tools; nothing it touches belongs
 in it.
 
-MIT.
+MIT, except the Fernscout name and logo: `.claude/skills/icloud-export/assets/fernscout-logo.svg` is not licensed under MIT. See `TRADEMARK.md` and `BRAND-LICENSE` in the [Fernscout repository](https://github.com/severinlindenmann/fernscout).
