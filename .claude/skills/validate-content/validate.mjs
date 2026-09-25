@@ -2,8 +2,8 @@
 // Check a journal on disk against the instance that will receive it.
 //
 //   node validate.mjs                       every journal in content/
-//   node validate.mjs --user severin        one of them
-//   node validate.mjs --trip algarve-2026   one trip
+//   node validate.mjs --user alex             one of them
+//   node validate.mjs --trip example-trip-2024   one trip
 //   node validate.mjs --json                for another program to read
 //   node validate.mjs --offline             the disk checks only, no network
 //

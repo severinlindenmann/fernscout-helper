@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Export the selection query.mjs worked out.
 //
-//   node export.mjs --trip algarve-2026 [--videos]
-//   node export.mjs --trip algarve-2026 --check     only re-check what is there
+//   node export.mjs --trip example-trip-2024 [--videos]
+//   node export.mjs --trip example-trip-2024 --check     only re-check what is there
 //
 // --exiftool is not optional: Photos keeps location in its own database, and
 // without it the exported files carry no coordinates at all.

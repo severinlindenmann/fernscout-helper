@@ -49,7 +49,7 @@ function fixture() {
   writeFileSync(join(DIR, "photos.json"), JSON.stringify({ trip: TRIP, photos }, null, 2));
   writeFileSync(PEOPLE, JSON.stringify({
     radiusKm: 150, perDay: 15, homes: [HOME],
-    people: { severin: [{ model: "Phone D" }] },
+    people: { alex: [{ model: "Phone D" }] },
   }, null, 2));
   writeFileSync(ZONES, JSON.stringify([
     { name: "Away-town", lat: AWAY.lat, lng: AWAY.lng, km: 50 },
@@ -65,7 +65,7 @@ const kept = () => JSON.parse(readFileSync(join(DIR, "photos.json"), "utf8"));
 // ── B1771: home on the first and last day ─────────────────────────────────
 {
   fixture();
-  const { out } = run(NARROW, "--who", "severin", "--people", PEOPLE);
+  const { out } = run(NARROW, "--who", "alex", "--people", PEOPLE);
   const files = kept().photos.map((p) => p.file ?? p.name);
   check("B1771: a photograph taken at home on the first day is left out",
     !files.includes("out-home.jpg"), files.join(", "));
@@ -78,7 +78,7 @@ const kept = () => JSON.parse(readFileSync(join(DIR, "photos.json"), "utf8"));
 // ── B1771: --keep-home is how somebody says they meant it ─────────────────
 {
   fixture();
-  run(NARROW, "--who", "severin", "--people", PEOPLE, "--keep-home");
+  run(NARROW, "--who", "alex", "--people", PEOPLE, "--keep-home");
   const files = kept().photos.map((p) => p.file ?? p.name);
   check("B1771: --keep-home keeps them, and says so",
     files.includes("out-home.jpg") && files.includes("back-home.jpg"), files.join(", "));
@@ -87,8 +87,8 @@ const kept = () => JSON.parse(readFileSync(join(DIR, "photos.json"), "utf8"));
 // ── B1771: no home known is said out loud rather than passing silently ────
 {
   fixture();
-  writeFileSync(PEOPLE, JSON.stringify({ radiusKm: 150, people: { severin: [{ model: "Phone D" }] } }, null, 2));
-  const { out } = run(NARROW, "--who", "severin", "--people", PEOPLE);
+  writeFileSync(PEOPLE, JSON.stringify({ radiusKm: 150, people: { alex: [{ model: "Phone D" }] } }, null, 2));
+  const { out } = run(NARROW, "--who", "alex", "--people", PEOPLE);
   check("B1771: with no home position, the run says the check did not happen",
     /no home position known/.test(out), out);
 }
@@ -96,13 +96,13 @@ const kept = () => JSON.parse(readFileSync(join(DIR, "photos.json"), "utf8"));
 // ── B1770: narrowing again does not undo a blur ───────────────────────────
 {
   fixture();
-  run(NARROW, "--who", "severin", "--people", PEOPLE);
+  run(NARROW, "--who", "alex", "--people", PEOPLE);
   run(BLUR, "--zones", ZONES);
   const blurred = kept();
   const coarse = blurred.photos.filter((p) => p.blurred).map((p) => p.lat);
   check("B1770: the blur pinned the away photographs to the zone", coarse.length >= 2, JSON.stringify(coarse));
 
-  const { out } = run(NARROW, "--who", "severin", "--people", PEOPLE);
+  const { out } = run(NARROW, "--who", "alex", "--people", PEOPLE);
   const after = kept();
   check("B1770: narrowing again re-applies the blur rather than undoing it",
     after.photos.filter((p) => p.blurred).length === coarse.length, out);

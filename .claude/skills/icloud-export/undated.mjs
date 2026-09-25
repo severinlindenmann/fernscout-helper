@@ -11,7 +11,7 @@
 //   · the camera's own sequence number in the filename — the ORDER is intact
 //   · whatever the person marks in Photos — a favourite, an album
 //
-//   node undated.mjs --trip asia-2018-canon --on 2017-09-11 \
+//   node undated.mjs --trip second-trip-2023 --on 2017-09-11 \
 //                    --width 5202,3465 [--favourites] [--album Canon]
 //
 // Writes export/<trip>/photos.json and uuids.txt like query.mjs does, ordered
@@ -23,7 +23,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ROOT, splitCsv, arg, has, die } from "../shared/lib.mjs";
 
-const trip = arg("trip") ?? die("--trip <name> is required, e.g. --trip asia-2018-canon");
+const trip = arg("trip") ?? die("--trip <name> is required, e.g. --trip second-trip-2023");
 const on = arg("on") ?? die('--on <YYYY-MM-DD> is required — the day the library wrongly stamped them.');
 const widths = (arg("width") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 const album = arg("album");

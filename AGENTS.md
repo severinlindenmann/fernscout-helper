@@ -227,6 +227,9 @@ folder of camera files, a Google Photos takeout or a chat log needs nothing of
 the sort. Say what a skill requires in its `SKILL.md` and check for it in the
 script — do not assume the machine.
 
+Never put a real person's name, home coordinates, travel history or trip names
+in examples, fixtures or tests — invent them (alex, example-trip-2024).
+
 ## The wider project
 
 Fernscout is a self-hostable travel journal:

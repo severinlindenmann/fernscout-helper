@@ -4,7 +4,7 @@
 // which is what the agent reads afterwards.
 //
 //   node review.mjs                          every exported trip, with an index
-//   node review.mjs --trip algarve-2026      straight into one of them
+//   node review.mjs --trip example-trip-2024      straight into one of them
 //   node review.mjs --port 4321 --no-open
 //
 // B1778: this was one trip per process. Ten years of a library came out as 26

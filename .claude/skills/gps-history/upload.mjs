@@ -4,7 +4,7 @@
 //
 //   node upload.mjs --user <username> --file import/Timeline.json --dry-run
 //   node upload.mjs --user <username> --file import/Timeline.json
-//   node upload.mjs --user <username> --trip algarve-2026 --track
+//   node upload.mjs --user <username> --trip example-trip-2024 --track
 //
 // **This script parses nothing.** Reading a Google Timeline, a Takeout, a GPX
 // or plain JSON Lines is the instance's job — `importers/` in the fernscout

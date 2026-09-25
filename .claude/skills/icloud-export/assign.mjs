@@ -2,7 +2,7 @@
 // Put undated photographs on the right days, by hand, in the order the camera
 // took them.
 //
-//   node assign.mjs --trip asia-2018-canon --into asia-2018 [--user severin]
+//   node assign.mjs --trip second-trip-2023 --into example-trip-2024 [--user alex]
 //
 // `--trip` is the exported folder of undated photographs; `--into` is the trip
 // in content/ whose days they belong to. The days offered are that trip's real
@@ -25,7 +25,7 @@ import { ensureBaked } from "./bake.mjs";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const trip = arg("trip") ?? die("--trip <exported folder of undated photographs> is required.");
 const into = arg("into") ?? die("--into <trip in content/> is required — whose days these belong to.");
-const user = arg("user") ?? "severin";
+const user = arg("user") ?? die("--user <name> is required — the folder your journal lives in.");
 const PORT = Number(arg("port") ?? 4400);
 
 const DIR = join(ROOT, "export", trip);

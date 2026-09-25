@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Ask the Photos library what a selection contains, before exporting anything.
 //
-//   node query.mjs --trip algarve-2026 --from 2026-06-22 --to 2026-07-01 \
-//                  [--album "Algarve"] [--favourites] [--top 15] [--videos]
+//   node query.mjs --trip example-trip-2024 --from 2026-06-22 --to 2026-07-01 \
+//                  [--album "Example Trip"] [--favourites] [--top 15] [--videos]
 //
 // Writes export/<trip>/photos.json and export/<trip>/uuids.txt, and prints what
 // the export will cost in photos, megabytes and minutes.
@@ -11,7 +11,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ROOT, splitCsv, arg, has, die } from "../shared/lib.mjs";
 
-const trip = arg("trip") ?? die("--trip <name> is required, e.g. --trip algarve-2026");
+const trip = arg("trip") ?? die("--trip <name> is required, e.g. --trip example-trip-2024");
 const from = arg("from"), to = arg("to"), album = arg("album");
 const top = arg("top") ? Number(arg("top")) : null;
 if (!from && !album) die("Give a date range (--from / --to) or an --album.");

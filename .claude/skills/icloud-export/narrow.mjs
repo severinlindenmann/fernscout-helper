@@ -2,15 +2,15 @@
 // A date range is not a trip. Two people in one household can be a thousand
 // kilometres apart on the same day, and a relative's photographs of somewhere
 // else land in the library under the same dates — so a selection made by date
-// alone arrives with a Hungarian village inside an Italian weekend.
+// alone arrives with the wrong village inside the wrong weekend.
 //
 // This narrows what query.mjs found to what actually belongs to the trip:
 //
 //   1. Where were THIS TRIP'S people that day? Every place their own cameras
 //      stood — not an average of them, and not the household's, because a
-//      household is not one unit: while one of them was in Piedmont the other
-//      was in Hungary, and letting her position anchor his trip pulls two
-//      hundred photographs of a Hungarian village into an Italian weekend.
+//      household is not one unit: while one of them was in Town A the other
+//      was in Town B, and letting one position anchor the other's trip pulls
+//      two hundred photographs of the wrong village into the wrong weekend.
 //   2. Keep a photograph taken within --km of that, whoever took it — a
 //      friend's pictures of the same afternoon belong in the same day.
 //   3. A photograph with no coordinates at all cannot be placed, so it is kept
@@ -18,7 +18,7 @@
 //      sent and downloaded images a phone accumulates.
 //   4. Then cap the day, favourites first, exactly as query.mjs's --top does.
 //
-//   node narrow.mjs --trip piemont-2025 --who severin [--km 100] [--top 15]
+//   node narrow.mjs --trip example-trip-2024 --who alex [--km 100] [--top 15]
 //                   [--home 47.05,8.31] [--home-km 5] [--keep-home]
 //
 // --who names the people whose cameras anchor this trip, comma-separated,
@@ -74,10 +74,11 @@ const distKm = (a, b) => {
 
 // Where the household was, day by day — as every place it stood, not one
 // average of them. The average was the first thing tried and it is wrong on
-// exactly the days that matter: on 31 December 2022 the household's own
-// photographs are Baden at 08:10 and Gyál at 23:40, and the midpoint of those
-// is the Baltic Sea. Every real photograph was then more than 100 km from the
-// "anchor" and the whole day was thrown away. A day is a journey, not a point.
+// exactly the days that matter: on one real day the household's own
+// photographs are Town A at 08:10 and Town B at 23:40, hundreds of kilometres
+// apart, and the midpoint of those is open ocean. Every real photograph was
+// then more than 100 km from the "anchor" and the whole day was thrown away.
+// A day is a journey, not a point.
 const anchors = {};
 for (const p of photos) {
   if (!WHO.includes(ownerOf(p)) || p.lat == null || p.lng == null) continue;

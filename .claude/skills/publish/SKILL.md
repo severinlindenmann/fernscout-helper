@@ -33,7 +33,7 @@ the owner can make, and it makes none of them.
 ## Say the plan out loud first
 
 ```bash
-node .claude/skills/publish/publish.mjs --user severin --dry-run
+node .claude/skills/publish/publish.mjs --user alex --dry-run
 ```
 
 The dry run asks the instance what it already holds, then prints exactly what a

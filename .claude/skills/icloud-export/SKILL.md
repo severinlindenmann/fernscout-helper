@@ -6,7 +6,7 @@ description: Turn a time range of a Mac's iCloud/Photos library into a Fernscout
 # iCloud → a journal
 
 The person has a Mac, a Photos library, and a holiday they never wrote up. This
-walks them from there to a folder of markdown and photographs they own.
+walks them from there to a folder of JSON documents and photographs they own.
 
 **The commands, in order.** Everything lives in `.claude/skills/icloud-export/`,
 and everything a run produces lands in `export/<trip>/` and `content/<user>/`,
@@ -70,8 +70,8 @@ Five questions. Ask them together, in the person's own language:
 | Ask | Why it matters |
 | --- | --- |
 | **Which dates?** | `--from 2026-06-22 --to 2026-07-01`. Both inclusive. |
-| **What is the trip called?** | Becomes the folder and the URL: lowercase, dashes, `algarve-2026` ages better than `holiday`. |
-| **Is there an album?** | `--album "Algarve"` is more precise than dates when they made one. Dates alone are fine. |
+| **What is the trip called?** | Becomes the folder and the URL: lowercase, dashes, `example-trip-2024` ages better than `holiday`. |
+| **Is there an album?** | `--album "Example Trip"` is more precise than dates when they made one. Dates alone are fine. |
 | **All photos, or only the good ones?** | `--favourites` takes only hearted ones; `--top 15` takes every favourite plus the best-scoring rest, up to fifteen a day. Nothing takes everything. |
 | **Who else was on this trip?** | Their name, and — only if they want that person to be able to write to the trip — an address. `people:` is the byline *and* write access, so a name with the wrong address is worse than a name not listed yet; **never infer one**, including from a face you recognise in the photographs. Asked here, not at the end (step 7), because the answer shapes the figures at build time and a person looking at their own holiday photographs still remembers who was there. |
 
@@ -82,7 +82,7 @@ that anything left behind stays in Photos and can be added later.
 Then run `query.mjs`, which reads the library and **writes nothing**:
 
 ```bash
-node query.mjs --trip algarve-2026 --from 2026-06-22 --to 2026-07-01 --top 15
+node query.mjs --trip example-trip-2024 --from 2026-06-22 --to 2026-07-01 --top 15
 ```
 
 It prints the photo count per day with place names, the download size, and a
@@ -93,7 +93,7 @@ photos is several gigabytes and several minutes.
 ## 3. Export
 
 ```bash
-node export.mjs --trip algarve-2026
+node export.mjs --trip example-trip-2024
 ```
 
 Safe to re-run: it only fetches what is missing. Live Photos drag a `.mov` along
@@ -113,7 +113,7 @@ over an export that already happened (B1772).
 
 ```bash
 node review.mjs                       # every exported trip, with an index
-node review.mjs --trip algarve-2026   # straight into one of them
+node review.mjs --trip example-trip-2024   # straight into one of them
 ```
 
 Opens `http://localhost:4321` in the browser. **One server, all the trips** —
@@ -170,7 +170,7 @@ unflagged photograph is not a claim that there is nothing in it (B1779).
 ## 5. Build the content folder
 
 ```bash
-node build.mjs --trip algarve-2026 --user severin
+node build.mjs --trip example-trip-2024 --user alex
 ```
 
 One entry per day, in `content/<user>/trips/<trip>/`. **It replaces the trip
@@ -222,8 +222,8 @@ now, with costs and the planned route as sections of it:
 
 ```json
 {
-  "id": "algarve-2026",
-  "title": "Algarve 2026",
+  "id": "example-trip-2024",
+  "title": "Example Trip 2024",
   "dates": { "from": "2026-06-22", "to": "2026-07-01" },
   "accent": "sky",
   "visibility": "private",
@@ -282,7 +282,7 @@ Now, and not before, ask whether they want to add:
 
 ## 8. Where it goes from here
 
-The folder *is* the journal — markdown and photographs they own, readable
+The folder *is* the journal — JSON documents and photographs they own, readable
 without any of this. Two ways to see it as a website, and both are theirs to
 choose:
 

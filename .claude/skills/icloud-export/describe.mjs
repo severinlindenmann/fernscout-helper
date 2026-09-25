@@ -5,7 +5,7 @@
 // `observed`, and `observed` is a memory-jogger for the person: it is never
 // the journal's prose. See SKILL.md, "The one rule".
 //
-//   node describe.mjs --trip davos-2026 [--per-sheet 16] [--tile 400]
+//   node describe.mjs --trip example-trip-2024 [--per-sheet 16] [--tile 400]
 //
 // Writes export/<trip>/sheets/<YYYY-MM-DD>[-2].jpg and sheets/index.json,
 // which says which photograph is in which cell, reading left to right.

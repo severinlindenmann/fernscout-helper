@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Add assigned photographs to days that already exist.
 //
-//   node merge.mjs --trip asia-2018-canon --into asia-2018 --user severin [--dry-run]
+//   node merge.mjs --trip second-trip-2023 --into example-trip-2024 --user alex [--dry-run]
 //
 // Reads export/<trip>/assign.json — what a person decided in assign.mjs — and
 // appends those photographs to the days they named, baked and stripped the
@@ -20,7 +20,7 @@ import { ensureBaked } from "./bake.mjs";
 
 const trip = arg("trip") ?? die("--trip <exported folder> is required.");
 const into = arg("into") ?? die("--into <trip in content/> is required.");
-const user = arg("user") ?? "severin";
+const user = arg("user") ?? die("--user <name> is required — the folder your journal lives in.");
 const PER_DAY = Number(arg("max-per-day") ?? 40);      // the instance's own ceiling
 
 const DIR = join(ROOT, "export", trip), PHOTOS = join(DIR, "photos");

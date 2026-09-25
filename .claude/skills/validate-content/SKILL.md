@@ -15,8 +15,8 @@ what it finds. **It changes nothing** — not the files, not the site.
 
 ```
 node validate.mjs                       every journal in content/
-node validate.mjs --user severin        one of them
-node validate.mjs --trip algarve-2026   one trip
+node validate.mjs --user alex             one of them
+node validate.mjs --trip example-trip-2024   one trip
 node validate.mjs --all                 every occurrence, not a count per repeated finding
 node validate.mjs --json                for a program to read
 node validate.mjs --offline             the cached schema, no network

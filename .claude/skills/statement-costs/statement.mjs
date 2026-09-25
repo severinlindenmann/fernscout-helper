@@ -2,8 +2,8 @@
 // A bank statement on this machine → what the trip cost, in the journal.
 //
 //   node statement.mjs --user <username> --file import/revolut/statement.csv \
-//                      --trip algarve-2026 --from 2026-06-22 --to 2026-07-01
-//   node statement.mjs --user <username> --trip algarve-2026 --apply rows.json
+//                      --trip example-trip-2024 --from 2026-06-22 --to 2026-07-01
+//   node statement.mjs --user <username> --trip example-trip-2024 --apply rows.json
 //
 // **This script parses nothing.** Reading the statement is the instance's job
 // — `importers/costs/` in the fernscout repository, running on the server

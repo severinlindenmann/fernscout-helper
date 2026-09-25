@@ -16,7 +16,7 @@ photographs, how far from home, and the place names.
 
 ```bash
 node .claude/skills/find-trips/discover.mjs \
-     --home 46.9480,7.4474 --home 47.3779,8.5403 --years 10
+     --home 46.9480,7.4474 --home 47.3779,8.5403 --years 10  # example: any two places
 ```
 
 Needs `osxphotos` and a Mac with the Photos library; `../icloud-export/check.sh`
@@ -34,8 +34,8 @@ zero photographs.
 ## A library is not one person
 
 The single most misleading thing in a shared library is that everybody's
-photographs look alike. A relative's week in Hungary, a friend's city break,
-the pictures somebody sent by message — all of it sits under the same dates as
+photographs look alike. A relative's week away, a friend's city break, the
+pictures somebody sent by message — all of it sits under the same dates as
 the owner's own life.
 
 Write `export/household.json` and the detection runs **per person**:
@@ -45,13 +45,13 @@ Write `export/household.json` and the detection runs **per person**:
   "radiusKm": 100,
   "perDay": 15,
   "people": {
-    "severin": [
+    "alex": [
       { "model": "Phone A", "to": "2018-02-05" },
       { "model": "Phone B", "from": "2018-02-05", "to": "2019-12-19" },
       { "model": "Phone C", "from": "2019-12-19", "to": "2024-08-20" },
       { "model": "Phone D", "from": "2024-08-20" }
     ],
-    "wife": [{ "model": "Phone E" }]
+    "sam": [{ "model": "Phone E" }]
   }
 }
 ```
@@ -73,15 +73,15 @@ frequent companions were never resolved at all.
 ## Three things it gets right, each learned the hard way
 
 - **A day is a journey, not a point.** Anchoring a day to the *median* of its
-  photographs puts 31 December — Baden in the morning, Gyál at night — in the
-  middle of the Baltic Sea, further from home than the radius and further from
+  photographs puts a day that ran Town A in the morning, Town B at night — in
+  the middle of the ocean, further from home than the radius and further from
   every photograph actually taken. That day vanished silently. A day is
   compared against *every* place its owner stood.
 - **Two people can be a thousand kilometres apart on the same day.** Detected
-  per person, one July week came out as his three days in Piedmont and her
-  seven in Hungary. Detected per library, it was one impossible trip spanning
-  both, and the place filter downstream then dragged 185 photographs of a
-  Hungarian village into an Italian weekend.
+  per person, one July week came out as one traveller's three days in one
+  place and the other's seven in another. Detected per library, it was one
+  impossible trip spanning both, and the place filter downstream then dragged
+  185 photographs of the wrong village into the wrong weekend.
 - **A run never ends on a guess.** Days with no coordinates are carried
   *inside* a run (up to `--gap`) but never start or end one.
 
@@ -103,7 +103,7 @@ letting the dates look authoritative.
 The dates go straight into the next skill, one trip at a time:
 
 ```bash
-node ../icloud-export/query.mjs --trip aland-2023 --from 2023-07-22 --to 2023-08-01
+node ../icloud-export/query.mjs --trip example-trip-2024 --from 2023-07-22 --to 2023-08-01
 ```
 
 Export on the **wider** of the candidate ranges when in doubt. A day the person

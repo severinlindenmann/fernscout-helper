@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // A journal folder and the instance, kept in step — both ways.
 //
-//   node sync.mjs down --user severin        bring the site's newest down here
-//   node sync.mjs up   --user severin        send what changed here up
-//   node sync.mjs down --user severin --dry-run     say what would move
-//   node sync.mjs up   --user severin --prefer-local    resolve conflicts my way
-//   node sync.mjs down --user severin --yes  allow it to prune local files
+//   node sync.mjs down --user alex            bring the site's newest down here
+//   node sync.mjs up   --user alex            send what changed here up
+//   node sync.mjs down --user alex --dry-run        say what would move
+//   node sync.mjs up   --user alex --prefer-local       resolve conflicts my way
+//   node sync.mjs down --user alex --yes      allow it to prune local files
 //
 // B491, the client half of B1495. The server ships two read-only routes — a
 // manifest of every path, size and hash, and a file `GET` — and nothing else:

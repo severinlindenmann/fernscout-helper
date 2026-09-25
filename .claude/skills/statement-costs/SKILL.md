@@ -19,11 +19,11 @@ script on one laptop.
 ```bash
 export FERNSCOUT_TOKEN=…                       # seven days; see `publish`
 node .claude/skills/statement-costs/statement.mjs --user <username> \
-     --file import/revolut/statement.csv --trip algarve-2026 \
+     --file import/revolut/statement.csv --trip example-trip-2024 \
      --from 2026-06-22 --to 2026-07-01
 # … agree the categories with them, fill them into the file …
 node .claude/skills/statement-costs/statement.mjs --user <username> \
-     --trip algarve-2026 --apply export/algarve-2026-costs.json
+     --trip example-trip-2024 --apply export/example-trip-2024-costs.json
 ```
 
 ```

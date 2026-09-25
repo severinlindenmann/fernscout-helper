@@ -20,7 +20,7 @@ node costs.mjs budget --trip … --user … --total 3000 --days 10 --currency CH
 ## Start by looking
 
 ```bash
-node costs.mjs check --trip algarve-2026 --user severin
+node costs.mjs check --trip example-trip-2024 --user alex
 ```
 
 It prints what is recorded, by category, which days have nothing, and which of

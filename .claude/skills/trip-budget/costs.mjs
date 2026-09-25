@@ -2,7 +2,7 @@
 // The costs a bank statement cannot tell you: what the flights were, what the
 // car cost, what was paid in cash. Three verbs.
 //
-//   node costs.mjs check   --trip algarve-2026 --user severin
+//   node costs.mjs check   --trip example-trip-2024 --user alex
 //   node costs.mjs add     --trip … --user … --day 2026-06-22 \
 //                          --label "Flüge Basel–Faro" --amount 780 --currency CHF --category flights
 //   node costs.mjs add     --trip … --user … --before   (…onto the trip itself)

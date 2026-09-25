@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // Put what is in content/ onto the instance, creating whatever is missing.
 //
-//   node publish.mjs --user severin                 the whole journal
-//   node publish.mjs --user severin --trip algarve-2026
-//   node publish.mjs --user severin --dry-run       say what it would do
-//   node publish.mjs --user severin --drafts        write the days, do not publish them
-//   node publish.mjs --user severin --changed <file> only what a sync says differs
+//   node publish.mjs --user alex                    the whole journal
+//   node publish.mjs --user alex --trip example-trip-2024
+//   node publish.mjs --user alex --dry-run          say what it would do
+//   node publish.mjs --user alex --drafts           write the days, do not publish them
+//   node publish.mjs --user alex --changed <file>   only what a sync says differs
 //
 // **This is a much smaller program than it was, and that is the point.** v1
 // had a door per field — `PATCH .../visibility`, `.../rates`, `.../people`,

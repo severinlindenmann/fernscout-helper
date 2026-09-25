@@ -8,7 +8,7 @@
 // kilometre. The map then shows one pin on the place instead of a trail
 // through it, and no photograph carries anything finer.
 //
-//   node blur.mjs --trip vemdalen-2024 [--zones export/zones.json] [--dry-run]
+//   node blur.mjs --trip example-trip-2024 [--zones export/zones.json] [--dry-run]
 //
 // Zones live in export/zones.json so they can be corrected without touching
 // code. Run it AFTER narrow.mjs and BEFORE export/build — narrow.mjs rebuilds

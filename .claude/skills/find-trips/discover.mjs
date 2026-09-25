@@ -4,15 +4,15 @@
 // nothing is written into the library, and it proposes rather than decides.
 //
 //   node discover.mjs --home 46.9480,7.4474 --home 47.3779,8.5403 [--years 10]
-//                     [--who severin] [--people export/household.json]
+//                     [--who alex] [--people export/household.json]
 //                     [--radius 100] [--min-days 2] [--gap 2] [--json]
 //
 // Three things this gets right that the obvious version does not, each of
 // which cost a real journal a real day before it was fixed:
 //
 //  1. A DAY IS A JOURNEY, NOT A POINT. Anchoring a day to the *median* of its
-//     photographs puts 31 December — Baden in the morning, Gyál at night —
-//     in the middle of the Baltic Sea, further than any radius from every
+//     photographs puts one journey's day — Town A in the morning, Town B at
+//     night — in the middle of the ocean, further than any radius from every
 //     photograph actually taken. The whole day then vanishes. A day is
 //     compared against every place its owner stood, and is "away" if any of
 //     them is far from home.
@@ -20,8 +20,8 @@
 //  2. A LIBRARY IS NOT ONE PERSON. Two people in a household can be a
 //     thousand kilometres apart on the same day, and a relative's pictures
 //     land in the same library under the same dates. Detection runs per
-//     person, from --people, so his three days in Piedmont and her seven in
-//     Hungary come out as two trips rather than one impossible one.
+//     person, from --people, so one traveller's three days and the other's
+//     seven come out as two trips rather than one impossible one.
 //
 //  3. A PHONE IS NOT ITS OWNER FOREVER. People replace phones and hand the
 //     old one on, so a camera belongs to somebody for a stretch of time and

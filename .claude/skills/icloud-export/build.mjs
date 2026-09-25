@@ -3,7 +3,7 @@
 // a sized gallery, the captions the person wrote. It does NOT write the prose —
 // that is the agent's job, from notes.md, and from nothing else.
 //
-//   node build.mjs --trip algarve-2026 --user severin
+//   node build.mjs --trip example-trip-2024 --user alex
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, existsSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
