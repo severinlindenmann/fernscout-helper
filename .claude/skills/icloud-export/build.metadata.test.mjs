@@ -95,6 +95,24 @@ function buildTrip(trip, user, photos) {
     both.length === 0, both.join(", "));
   check("B1769: a day whose photographs carried a time does not also decline time",
     doc.time === "09:00" && !("time" in (doc.declined ?? {})), text);
+  // B1713: a day with coordinates asks the instance to look its weather up.
+  check("B1713: a day with coordinates writes weather: true and does not decline it",
+    doc.weather === true && !("weather" in (doc.declined ?? {})), text);
+  // B1907: the instance derives the code from the country — a decline would stop it.
+  check("B1907: a day with a country leaves countryCode to the instance, undeclined",
+    doc.country === "Switzerland" && doc.countryCode === undefined && !("countryCode" in (doc.declined ?? {})), text);
+}
+
+// ── B1713/B1907: a day with no position and no country declines both ─────
+{
+  const { text } = buildTrip("b1713-no-gps", "b1713-user", [
+    { name: "indoors.jpg", day: "2025-11-17", taken: "2025-11-17T09:00:00", time: "09:00", place: "", fav: false },
+  ]);
+  const doc = JSON.parse(text);
+  check("B1713: a day without coordinates declines weather rather than guessing one",
+    doc.weather === undefined && typeof doc.declined?.weather === "string", text);
+  check("B1907: a day without a country declines countryCode",
+    doc.country === undefined && typeof doc.declined?.countryCode === "string", text);
 }
 
 // ── B1768: a rebuild replaces the trip, it does not add to it ──────────────

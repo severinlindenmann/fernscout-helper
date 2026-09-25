@@ -14,14 +14,18 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
-import { createHash } from "node:crypto";
 import { ROOT, arg, has, die } from "../shared/lib.mjs";
+import { contentHash } from "../shared/syncManifest.mjs";
 import { ensureBaked } from "./bake.mjs";
 
 const trip = arg("trip") ?? die("--trip <exported folder> is required.");
 const into = arg("into") ?? die("--into <trip in content/> is required.");
 const user = arg("user") ?? die("--user <name> is required — the folder your journal lives in.");
-const PER_DAY = Number(arg("max-per-day") ?? 40);      // the instance's own ceiling
+// The instance's own ceiling on items in one day. 40 is the default an
+// instance ships with, kept as a fallback because this script works offline;
+// the real value is the instance's to say, at /api/v2/status `limits.itemsPerDay`
+// — pass it with --max-per-day when an instance publishes another one.
+const PER_DAY = Number(arg("max-per-day") ?? 40);
 
 const DIR = join(ROOT, "export", trip), PHOTOS = join(DIR, "photos");
 const TRIPDIR = join(ROOT, "content", user, "trips", into);
@@ -50,8 +54,10 @@ for (const [slug, list] of Object.entries(bySlug)) {
 
   for (const file of take) {
     const baked = ensureBaked(DIR, PHOTOS, file);
-    // Name by content, as the instance does, so re-running cannot duplicate.
-    const hash = createHash("md5").update(readFileSync(baked)).digest("hex");
+    // Name by content, as the instance does — SHA-256, hex, cut to 32
+    // (fernscout lib/ingest/hash.ts `contentHash`) — so re-running cannot
+    // duplicate, and the name here is the name the instance would give it.
+    const hash = contentHash(readFileSync(baked));
     const name = `${hash}.jpg`;
     const src = `/media/${into}/${slug}/${name}`;
     if (entry.media.some((m) => m.src === src)) { skipped++; continue }
@@ -59,8 +65,16 @@ for (const [slug, list] of Object.entries(bySlug)) {
     entry.media.push({ src });
     added++;
   }
+  // `??= []` above, and nothing came: leave the day as it was. A day that now
+  // holds photographs no longer declines them — the instance refuses a section
+  // that is there and declined at once (B1769's rule).
+  if (!entry.media.length) delete entry.media;
+  else if (entry.declined && "media" in entry.declined) {
+    delete entry.declined.media;
+    if (!Object.keys(entry.declined).length) delete entry.declined;
+  }
   if (!has("dry-run")) writeFileSync(entryPath, JSON.stringify(entry, null, 2) + "\n");
-  console.log(`  ${slug}: ${entry.media.length} photographs (${take.length} added)`);
+  console.log(`  ${slug}: ${entry.media?.length ?? 0} photographs (${take.length} added)`);
 }
 
 console.log(`\n${added} added, ${skipped} already there` +

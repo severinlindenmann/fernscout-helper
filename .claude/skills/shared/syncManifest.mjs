@@ -77,8 +77,9 @@ export function inSync(path) {
 }
 
 /**
- * `trips/<trip>/media/<day>/<file>` — a photograph as the **instance** serves
- * it, and the other half of the same rule — B1789.
+ * `trips/<trip>/media/<day>/<file>` (or `trips/<trip>/media/<file>`, for an
+ * upload that named no day) — a photograph as the **instance** serves it, and
+ * the other half of the same rule — B1789.
  *
  * These bytes are the server's own work: it derives them from the upload, and
  * nothing on this side can produce them or send them. What the folder holds at
@@ -100,7 +101,12 @@ export function inSync(path) {
  */
 export function servedDerivative(path) {
   const segments = path.split("/");
-  return segments.length === 5 && segments[0] === "trips" && segments[2] === "media"
+  // Five segments for a photograph on a day, four for one uploaded without a
+  // day: the instance files that straight under `media/` (`subdir = day ?? ""`
+  // in fernscout's lib/api/v2/media.ts), and matching only the five-segment
+  // shape left every day-less upload in exactly the B1789 loop above.
+  return (segments.length === 5 || segments.length === 4)
+    && segments[0] === "trips" && segments[2] === "media"
     && !path.toLowerCase().endsWith(".json");
 }
 
