@@ -27,7 +27,7 @@ tools add to those days: costs, the route, a check for gaps, publishing.
 
 Every tool asks for a **username**. It isn't a login. It is the name of your
 folder under `content/`, for example `alex`, and it becomes your journal's
-address if you publish.
+address if you publish (`https://fernscout.ch/@alex`).
 
 ## What works best
 
