@@ -102,7 +102,7 @@ const local = localManifest(dir, base.files);
 async function fetchFile(path) {
   // ponytail: one request per file, which is right for the incremental case
   // this exists for and is a lot of round trips on a first sync of a large
-  // journal. `/<user>/export.zip` is the bulk door if that ever bites —
+  // journal. `/@<user>/export.zip` is the bulk door if that ever bites —
   // byte-faithful for everything it carries, minus `track.json`, which it
   // ships and the manifest excludes.
   const response = await fetch(`${SITE}/api/v2/${user}/sync/file/${path.split("/").map(encodeURIComponent).join("/")}`, {

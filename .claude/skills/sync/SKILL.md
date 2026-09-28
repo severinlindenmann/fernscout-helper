@@ -174,7 +174,7 @@ it unconditionally instead of guessing.
 
 Into an empty folder, it fetches everything — one request per file. That is
 right for the incremental case this exists for and is a lot of round trips on
-a first sync of a large journal; `/<user>/export.zip` is the bulk door if it
+a first sync of a large journal; `/@<user>/export.zip` is the bulk door if it
 ever bites, byte-faithful for everything it carries. Note that the export
 *does* ship each trip's `track.json`, which a sync excludes, so a folder
 seeded that way needs those deleted or the next `up` offers to push a derived
