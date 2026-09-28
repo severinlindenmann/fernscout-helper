@@ -60,7 +60,7 @@ reasonable. But ask.
 line starts at their front door. The instance cuts a radius out of every line
 it ever draws — its private zones — but nothing can guess the coordinates. Ask
 for the address or the rough spot, and tell them what it is for. Then either
-they set it themselves in their studio (`/<user>/studio/location`), or you set
+they set it themselves in their studio (`/@<user>/studio/location`), or you set
 it for them with the zones door (B2203), owner token only:
 
 ```bash
